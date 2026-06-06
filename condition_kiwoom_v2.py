@@ -1,0 +1,211 @@
+# -*- coding: utf-8 -*-
+"""
+condition_kiwoom.py - 하이퍼 트레이딩 메인
+키움 API 로그인 + 이벤트 허브 역할
+각 모듈로 이벤트 분배
+"""
+
+import sys
+import json
+from datetime import datetime
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QAxContainer import QAxWidget
+from PyQt5.QtCore import QTimer
+
+# 모듈 import
+from modules import trade_manager as tm
+from modules.module1_sector  import Module1Sector
+from modules.module2_hwasa   import Module2Hwasa
+from modules.module2_gdjum   import Module2Gdjum
+from modules.module3_closing import Module3Closing
+from modules.module4_chalna  import Module4Chalna
+from modules.common          import (
+    send_telegram, M1_INTERVAL, M1_START, M1_END,
+    M2_START, M2_END, AUTO_TRADE_CONDITION, GDJUM_CONDITION,
+    is_m1_open, is_m2_open
+)
+
+# =============================================================
+# Qt 앱 + 키움 API
+# =============================================================
+app    = QApplication(sys.argv)
+kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+
+# trade_manager에 kiwoom 주입
+tm.set_kiwoom(kiwoom)
+
+# =============================================================
+# 모듈 인스턴스 (조건식 로드 후 초기화)
+# =============================================================
+mod1    = None
+mod2_hw = None
+mod2_gj = None
+mod3    = None
+mod4    = None
+
+# =============================================================
+# 전역 타이머
+# =============================================================
+timer_m1      = QTimer()   # 15분 주기
+condition_list = {}
+
+# =============================================================
+# 로그인
+# =============================================================
+def on_login(err_code: int):
+    if err_code == 0:
+        print("로그인 성공!")
+        QTimer.singleShot(1000, lambda:
+            kiwoom.dynamicCall("GetConditionLoad()"))
+    else:
+        print(f"로그인 실패: {err_code}")
+
+# =============================================================
+# 조건식 로드 완료
+# =============================================================
+def on_condition_load():
+    global mod1, mod2_hw, mod2_gj, mod3, mod4
+
+    result = kiwoom.dynamicCall("GetConditionNameList()")
+    for c in result.split(';'):
+        if not c:
+            continue
+        parts = c.split('^')
+        if len(parts) >= 2:
+            condition_list[parts[1]] = parts[0]
+    print(f"조건식 로드: {list(condition_list.keys())}")
+
+    # 모듈 초기화
+    mod1    = Module1Sector(kiwoom)
+    mod2_hw = Module2Hwasa(kiwoom)
+    mod2_gj = Module2Gdjum(kiwoom)
+    mod3    = Module3Closing(kiwoom, condition_list)
+    mod4    = Module4Chalna(kiwoom)
+
+    mod1.set_condition_list(condition_list)
+
+    # 타이머 설정
+    timer_m1.timeout.connect(on_interval_m1)
+    timer_m1.start(M1_INTERVAL)
+    print("모듈1 15분 타이머 시작")
+
+    # 체결 이벤트
+    kiwoom.OnReceiveChejanData.connect(on_chejan)
+
+    # 14:50 일괄청산
+    tm.setup_force_exit_timer()
+
+    # 모듈2 실시간 조건검색 등록
+    QTimer.singleShot(1000, register_realtime_conditions)
+
+    # 모듈3 타이머
+    QTimer.singleShot(1500, mod3.setup_timer)
+
+    # 모듈4 시작
+    QTimer.singleShot(2000, mod4.start)
+
+    # 모듈1 초기 실행
+    QTimer.singleShot(2500, lambda: on_interval_m1())
+
+    print("전체 모듈 초기화 완료!")
+    send_telegram("<b>하이퍼 트레이딩 시스템 시작!</b>\n모듈1~4 전체 가동")
+
+# =============================================================
+# 모듈1 타이머
+# =============================================================
+def on_interval_m1():
+    print(f"\n[{datetime.now().strftime('%H:%M')}] 모듈1 타이머 발동!")
+    if is_m1_open():
+        mod1.start_scan()
+    else:
+        print("모듈1 장외 - 스킵")
+
+# =============================================================
+# 모듈2 실시간 조건검색 등록
+# =============================================================
+def register_realtime_conditions():
+    screens = {
+        AUTO_TRADE_CONDITION: "0211",
+        GDJUM_CONDITION:      "0210",
+    }
+    kiwoom.OnReceiveRealCondition.connect(on_realtime_condition)
+    kiwoom.OnReceiveTrCondition.connect(on_initial_condition)
+
+    for cname, screen in screens.items():
+        if cname not in condition_list:
+            print(f"  조건식 없음: {cname}")
+            continue
+        cidx = condition_list[cname]
+        kiwoom.dynamicCall("SendCondition(QString, QString, int, int)",
+                           screen, cname, int(cidx), 1)
+        print(f"  실시간 등록: [{screen}] {cname}")
+
+    send_telegram(
+        "<b>단타 조건검색 실시간 등록 완료</b>\n"
+        f"황사장 | 전일고점돌파\n편입 즉시 알림 시작!"
+    )
+
+def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
+    """실시간 등록 시 현재 편입 종목 초기 수신"""
+    pass   # 초기 편입 종목은 알림 없이 무시
+
+def on_realtime_condition(code, condition_type, condition_name, index, next_cond):
+    """실시간 편입/이탈 콜백"""
+    now_str = datetime.now().strftime("%H:%M")
+
+    if condition_type == "I":
+        # 황사장
+        if condition_name == AUTO_TRADE_CONDITION:
+            mod2_hw.on_enter(code, now_str)
+        # 전일고점돌파
+        elif condition_name == GDJUM_CONDITION:
+            mod2_gj.on_enter(code, now_str)
+
+    elif condition_type == "D":
+        if condition_name == AUTO_TRADE_CONDITION:
+            mod2_hw.on_exit(code, now_str)
+        elif condition_name == GDJUM_CONDITION:
+            mod2_gj.on_exit(code, now_str)
+
+# =============================================================
+# 실시간 데이터 수신 (이벤트 허브)
+# =============================================================
+def on_realtime_data(code, real_type, real_data):
+    # 모듈4: 찰나의 매매
+    if real_type in ("주식호가잔량", "주식체결"):
+        mod4.on_realtime(code, real_type)
+
+    # 전일고점돌파 호가 체크
+    if real_type == "주식호가잔량":
+        mod2_gj.on_realtime_hoga(code, real_type)
+
+    # 포지션 보유 종목 실시간 체결가 (트레일링/손절)
+    if real_type == "주식체결":
+        # 현재가 캐시 업데이트
+        try:
+            price_str = kiwoom.dynamicCall(
+                "GetCommRealData(QString, int)", real_type, 10)
+            price = abs(int(price_str.strip()))
+            tm.kiwoom_realtime_cache[code] = price
+            # 전일고점돌파 최고가 업데이트
+            mod2_gj.on_realtime_price(code, price)
+        except:
+            pass
+        # 트레일링/손절
+        tm.on_realtime_price(code, real_type, kiwoom)
+
+# =============================================================
+# 체결 이벤트
+# =============================================================
+def on_chejan(gubun, item_cnt, fid_list):
+    tm.on_chejan(gubun, kiwoom)
+
+# =============================================================
+# 이벤트 연결 + 실행
+# =============================================================
+kiwoom.OnEventConnect.connect(on_login)
+kiwoom.OnReceiveConditionVer.connect(on_condition_load)
+kiwoom.OnReceiveRealData.connect(on_realtime_data)
+kiwoom.dynamicCall("CommConnect()")
+
+app.exec_()
