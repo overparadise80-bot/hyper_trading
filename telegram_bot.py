@@ -4,6 +4,7 @@ telegram_bot.py - Gemini 지능형 트레이딩 비서
 - 텔레그램 메시지 수신 -> Gemini API 호출 -> 답변 전송
 - 대화 히스토리 유지 (맥락 기억)
 - 명령어: /start /clear /status /help
+- 에러 핸들러 추가 (Bad Gateway 등 네트워크 에러로 봇 죽는 것 방지)
 """
 
 import os
@@ -71,13 +72,11 @@ def get_history(chat_id: int) -> list:
 def add_history(chat_id: int, role: str, content: str):
     if chat_id not in conversation_history:
         conversation_history[chat_id] = []
-    # Gemini 형식: user / model
     gemini_role = "model" if role == "assistant" else "user"
     conversation_history[chat_id].append({
         "role": gemini_role,
         "parts": [{"text": content}]
     })
-    # 최대 히스토리 초과 시 오래된 것 삭제
     if len(conversation_history[chat_id]) > MAX_HISTORY * 2:
         conversation_history[chat_id] = \
             conversation_history[chat_id][-MAX_HISTORY * 2:]
@@ -90,7 +89,6 @@ def clear_history(chat_id: int):
 # =============================================================
 async def ask_gemini(chat_id: int, user_message: str) -> str:
     try:
-        # 히스토리에 사용자 메시지 추가
         add_history(chat_id, "user", user_message)
         history = get_history(chat_id)
 
@@ -112,7 +110,6 @@ async def ask_gemini(chat_id: int, user_message: str) -> str:
         )
         data = resp.json()
 
-        # 오류 체크
         if "error" in data:
             err = data["error"]
             print(f"  Gemini 오류: {err}")
@@ -122,7 +119,6 @@ async def ask_gemini(chat_id: int, user_message: str) -> str:
             data["candidates"][0]["content"]["parts"][0]["text"]
         )
 
-        # 히스토리에 답변 추가
         add_history(chat_id, "assistant", answer)
         return answer
 
@@ -216,7 +212,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_msg = update.message.text
     chat_id  = update.effective_chat.id
 
-    # 타이핑 표시
     await context.bot.send_chat_action(
         chat_id=chat_id, action="typing"
     )
@@ -225,7 +220,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     answer = await ask_gemini(chat_id, user_msg)
 
-    # 4096자 초과 시 분할 전송
     if len(answer) > 4000:
         chunks = [answer[i:i+4000] for i in range(0, len(answer), 4000)]
         for chunk in chunks:
@@ -234,6 +228,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer)
 
     print(f"  답변: {answer[:50]}...")
+
+# =============================================================
+# ★ 에러 핸들러 - Bad Gateway 등 네트워크 에러 무시
+# =============================================================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 봇 에러 (자동 무시): {context.error}")
 
 # =============================================================
 # 봇 실행
@@ -250,8 +250,14 @@ def start_bot():
         filters.TEXT & ~filters.COMMAND, handle_message
     ))
 
+    # ★ 에러 핸들러 등록
+    application.add_error_handler(error_handler)
+
     print(f"봇 준비 완료! CHAT_ID: {CHAT_ID}")
-    application.run_polling(drop_pending_updates=True)
+    application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES
+    )
 
 if __name__ == "__main__":
     start_bot()

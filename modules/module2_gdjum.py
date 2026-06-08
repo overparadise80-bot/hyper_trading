@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 module2_gdjum.py - 단타검색식전일고점돌파 자동매매
-- 호가 조건: 전일고점 ±4호가 각 1억 이상
+- 호가 조건: 전일고점 ±4호가 각 5천만원 이상 (1억 → 5천만 하향)
 - 거래량 조건: 돌파캔들 >= 60캔들 평균 × 2배
 - 8% 이상 상승 후 눌림 스킵
+- 편입 후 2시간 초과 시 진입 포기
 - 전일고점 -4틱 지정가 진입
 """
 
@@ -12,10 +13,16 @@ from PyQt5.QtCore import QTimer
 from modules.common import *
 from modules import trade_manager as tm
 
+# ★ 호가 잔량 기준 (1억 → 5천만)
+GDJUM_TICK_MIN_NEW = 5e7   # 5천만원
+
+# ★ 편입 후 최대 대기 시간 (분)
+GDJUM_MAX_WAIT_MIN = 120   # 2시간
+
 class Module2Gdjum:
     def __init__(self, kiwoom):
-        self.kiwoom  = kiwoom
-        self.status  = {}   # {코드: 상태dict}
+        self.kiwoom    = kiwoom
+        self.status    = {}
         self.vol_queue = []
         self.vol_idx   = 0
 
@@ -36,8 +43,8 @@ class Module2Gdjum:
             "order_sent":  False,
             "name":        "",
             "screen":      tm.next_screen(),
+            "enter_time":  datetime.now(),  # ★ 편입 시각 기록
         }
-        # 전일고가 조회
         try:
             self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_basic)
         except:
@@ -59,7 +66,6 @@ class Module2Gdjum:
             self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_basic)
         except:
             pass
-        # 상태 없는 코드 찾기
         code = next((c for c, s in self.status.items()
                      if s["prev_high"] == 0 and s["name"] == ""), None)
         if not code:
@@ -86,10 +92,8 @@ class Module2Gdjum:
 
             print(f"  [전일고점] {name} 전일고가:{prev_high:,} 진입예정:{entry_p:,}")
 
-            # 호가 구독
             self._subscribe_hoga(code)
 
-            # 5분봉 거래량 조회
             self.vol_queue.append(code)
             if len(self.vol_queue) == 1:
                 QTimer.singleShot(300, lambda: self._fetch_vol(0))
@@ -99,6 +103,7 @@ class Module2Gdjum:
                 f"• {name}\n"
                 f"  전일고가: {prev_high:,}원\n"
                 f"  진입예정: {entry_p:,}원 (-{GDJUM_TICK_DOWN}틱)\n"
+                f"  ⏱ 2시간 내 타점 미도달 시 포기\n"
                 f"  조건 확인 중..."
             )
         except Exception as e:
@@ -114,11 +119,31 @@ class Module2Gdjum:
             screen, code, fids, "1"
         )
 
+    def _is_expired(self, code: str) -> bool:
+        """편입 후 2시간 초과 여부 체크"""
+        s = self.status.get(code)
+        if not s:
+            return True
+        elapsed = (datetime.now() - s["enter_time"]).total_seconds() / 60
+        return elapsed > GDJUM_MAX_WAIT_MIN
+
     def on_realtime_hoga(self, code: str, real_type: str):
         if code not in self.status:
             return
         s = self.status[code]
         if s["hoga_ok"] or s["order_sent"]:
+            return
+
+        # ★ 2시간 초과 체크
+        if self._is_expired(code):
+            name = s.get("name", code)
+            print(f"  [전일고점] {name} 2시간 초과 → 진입 포기")
+            send_telegram(
+                f"<b>[전일고점돌파] 진입 포기</b>\n"
+                f"• {name}\n"
+                f"  사유: 편입 후 2시간 내 타점 미도달"
+            )
+            self.status.pop(code, None)
             return
 
         prev_high = s["prev_high"]
@@ -144,7 +169,8 @@ class Module2Gdjum:
                         "GetCommRealData(QString, int)", real_type, 61+i).strip()))
                     if hp == target:
                         found = True
-                        if hp * hq < GDJUM_TICK_MIN:
+                        # ★ 기준 5천만원으로 변경
+                        if hp * hq < GDJUM_TICK_MIN_NEW:
                             all_ok = False
                         break
                 except:
@@ -229,6 +255,17 @@ class Module2Gdjum:
         if not (s["hoga_ok"] and s["vol_ok"]):
             return
 
+        # ★ 2시간 초과 체크
+        if self._is_expired(code):
+            name = s.get("name", code)
+            send_telegram(
+                f"<b>[전일고점돌파] 진입 포기</b>\n"
+                f"• {name}\n"
+                f"  사유: 편입 후 2시간 내 타점 미도달"
+            )
+            self.status.pop(code, None)
+            return
+
         # 8% 이상 상승 후 눌림 체크
         entry_p   = s["entry_price"]
         max_price = s["max_price"]
@@ -254,11 +291,15 @@ class Module2Gdjum:
         )
         if ok:
             s["order_sent"] = True
+            elapsed_min = int(
+                (datetime.now() - s["enter_time"]).total_seconds() / 60
+            )
             send_telegram(
                 f"<b>[전일고점돌파] 지정가 매수!</b>\n"
                 f"• {s['name']}\n"
                 f"  전일고가: {s['prev_high']:,}원\n"
                 f"  진입가: {entry_p:,}원 (-{GDJUM_TICK_DOWN}틱)\n"
                 f"  수량: {qty}주  금액: {entry_p*qty:,}원\n"
+                f"  편입 후 경과: {elapsed_min}분\n"
                 f"  호가: OK | 거래량: OK"
             )

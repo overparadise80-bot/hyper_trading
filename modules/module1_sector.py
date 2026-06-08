@@ -6,10 +6,12 @@ module1_sector.py v3 - 주도섹터 + 52주신고가 브리핑
 - [PHASE4]   프로그램 매매 조회 (opt10059)
 - [PHASE5]   52주신고가 조건검색 + 상세 조회
 - [PHASE6]   브리핑 생성 + HTML 갱신 + 텔레그램 전송
+- ★ 매 15분마다 ngrok URL 텔레그램 자동 전송
 """
 
 import json
 import os
+import requests as req
 from datetime import datetime
 from PyQt5.QtCore import QTimer
 from modules.common import *
@@ -21,11 +23,11 @@ with open("theme_map_v2.json", "r", encoding="utf-8") as f:
 with open("code_to_themes_v2.json", "r", encoding="utf-8") as f:
     CODE_TO_THEMES = json.load(f)
 
-ALL_CODES      = list(CODE_TO_THEMES.keys())
+ALL_CODES        = list(CODE_TO_THEMES.keys())
 THEME_MIN_STOCKS = 5
-THEME_TOP_N    = 7
-THEME_STOCK_TOP = 5
-HTML_OUTPUT    = "monitor.html"   # 로컬 브라우저용 파일
+THEME_TOP_N      = 7
+THEME_STOCK_TOP  = 5
+HTML_OUTPUT      = "monitor.html"
 
 
 class Module1Sector:
@@ -39,11 +41,11 @@ class Module1Sector:
         self._condition_list = condition_list
 
     def reset(self):
-        self.stock_data      = {}   # {코드: {name,rate,price,amount,prog}}
+        self.stock_data      = {}
         self.scan_queue      = []
         self.scan_idx        = 0
         self.theme_ranking   = []
-        self.prog_queue      = []   # 프로그램 매매 조회 대상
+        self.prog_queue      = []
         self.prog_idx        = 0
         self.shingoga_codes  = []
         self.shingoga_detail = {}
@@ -121,7 +123,6 @@ class Module1Sector:
         print(f"[모듈1] 종목 스캔 완료 ({len(self.stock_data)}개). 테마 집계...")
         self._calc_theme_ranking()
 
-        # TOP7 섹터의 TOP5 종목만 프로그램 매매 조회 (35종목 이내)
         prog_codes = []
         for t in self.theme_ranking[:THEME_TOP_N]:
             for s in t["stocks"][:THEME_STOCK_TOP]:
@@ -177,11 +178,11 @@ class Module1Sector:
         self.kiwoom.dynamicCall(
             "SetInputValue(QString, QString)", "종목코드", code)
         self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "금액수량구분", "2")  # 금액
+            "SetInputValue(QString, QString)", "금액수량구분", "2")
         self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "매매구분", "0")      # 전체
+            "SetInputValue(QString, QString)", "매매구분", "0")
         self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "단위구분", "1")      # 억원
+            "SetInputValue(QString, QString)", "단위구분", "1")
         self.kiwoom.dynamicCall(
             "CommRqData(QString, QString, int, QString)",
             "프로그램매매요청", "opt10059", 0, "0120")
@@ -192,7 +193,6 @@ class Module1Sector:
         code = self.prog_queue[self.prog_idx]
         k    = self.kiwoom
         try:
-            # 차익 + 비차익 순매수금액 합산 (억원)
             buy_str  = k.dynamicCall("GetCommData(QString,QString,int,QString)",
                                       trcode, rqname, 0, "프로그램매수금액").strip()
             sell_str = k.dynamicCall("GetCommData(QString,QString,int,QString)",
@@ -208,7 +208,6 @@ class Module1Sector:
     # PHASE4 완료 → 테마 종목 prog 값 갱신 → 52주신고가
     # ==========================================================
     def _phase4_done(self):
-        # theme_ranking의 stocks 리스트에 prog 값 반영
         for t in self.theme_ranking:
             for s in t["stocks"]:
                 s["prog"] = self.stock_data.get(s["code"], {}).get("prog", 0)
@@ -307,6 +306,22 @@ class Module1Sector:
         print("[모듈1] 브리핑 생성...")
         self._build_and_send()
 
+    # ==========================================================
+    # ★ ngrok URL 조회
+    # ==========================================================
+    def _get_ngrok_url(self) -> str:
+        """ngrok 터널 URL 조회 (localhost:4040 API)"""
+        try:
+            resp = req.get("http://localhost:4040/api/tunnels", timeout=3)
+            tunnels = resp.json().get("tunnels", [])
+            for t in tunnels:
+                url = t.get("public_url", "")
+                if url.startswith("https://"):
+                    return url + "/monitor.html"
+        except:
+            pass
+        return ""
+
     def _build_and_send(self):
         now     = datetime.now().strftime("%m/%d %H:%M")
         now_sec = datetime.now().strftime("%H:%M:%S")
@@ -316,7 +331,7 @@ class Module1Sector:
             for s in t["stocks"]:
                 top_theme_codes.add(s["code"])
 
-        # ── 텔레그램 메시지
+        # ── 텔레그램 메시지1: 주도섹터
         medals = ["🥇","🥈","🥉","4위","5위","6위","7위"]
         msg1 = f"<b>📊 테마 주도섹터 TOP{THEME_TOP_N}</b>  {now}\n"
         msg1 += "거래대금 가중 등락률 기준\n"
@@ -340,6 +355,7 @@ class Module1Sector:
                          f"{s['amount']}억{prog_str}\n")
             msg1 += "\n"
 
+        # ── 텔레그램 메시지2: 52주신고가
         filtered = []
         for code, d in self.shingoga_detail.items():
             if d["is_yangbong"] or d["is_sijeo"]:
@@ -360,7 +376,7 @@ class Module1Sector:
         for s in filtered:
             fire  = "🔥" if s["in_theme"] else "  "
             sijeo = " <b>[시=저]</b>" if s["is_sijeo"] else ""
-            themes = CODE_TO_THEMES.get(s["code"], [])
+            themes    = CODE_TO_THEMES.get(s["code"], [])
             theme_tag = f" [{'/'.join(themes[:2])}]" if themes else ""
             msg2 += (f"{fire} {s['name']}"
                      f"  <b>{s['rate']:+.2f}%</b>"
@@ -373,13 +389,28 @@ class Module1Sector:
         # ── HTML 파일 갱신
         self._update_html(now_sec)
 
-        # ── 텔레그램 전송
+        # ── 텔레그램 순차 전송
         send_telegram(msg1)
         QTimer.singleShot(2000, lambda: send_telegram(msg2))
 
-        # ── 스크린샷 → 텔레그램 전송 (HTML 갱신 후 1.5초 대기)
+        # ── ★ ngrok URL 15분마다 텔레그램 전송
+        ngrok_url = self._get_ngrok_url()
+        if ngrok_url:
+            url_msg = (
+                f"📊 <b>주도섹터 모니터 URL</b>\n"
+                f"{ngrok_url}\n\n"
+                f"갤럭시탭에서 위 링크를 열어두세요!\n"
+                f"(15분마다 자동 새로고침)"
+            )
+            QTimer.singleShot(3000, lambda: send_telegram(url_msg))
+            print(f"  ngrok URL 전송: {ngrok_url}")
+        else:
+            print("  ngrok URL 없음 - URL 전송 스킵")
+
+        # ── 스크린샷 → 텔레그램 전송
         caption = f"<b>주도섹터 모니터</b>  {now}"
-        QTimer.singleShot(1500, lambda: send_screenshot_to_telegram(caption))
+        QTimer.singleShot(4000, lambda: send_screenshot_to_telegram(caption))
+
         print(f"  모듈1 완료! [{now}]")
 
     # ==========================================================
@@ -388,7 +419,6 @@ class Module1Sector:
     def _update_html(self, scan_time: str):
         top7 = self.theme_ranking[:THEME_TOP_N]
 
-        # JS용 데이터 직렬화
         sectors_js = []
         for t in top7:
             stocks_js = []
@@ -523,29 +553,4 @@ function render(){{
       <div class="card-head">
         <div><span class="rank-badge">${{medals[si]||si+1+'위'}}</span><span class="sector-name">${{sec.name}}</span></div>
         <div class="sector-meta">
-          <div class="sector-rate" style="color:${{rc(sec.rate)}}">${{fr(sec.rate)}}</div>
-          <div class="sector-sub">${{fa(sec.amt)}} · ${{Math.round(sec.up_ratio*100)}}%상승</div>
-        </div>
-      </div>
-      <div class="card-body">${{rows}}</div>
-    </div>`;
-  }}).join('');
-}}
-
-function tick(){{
-  const d=new Date(), p=n=>String(n).padStart(2,'0');
-  document.getElementById('cur-time').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
-  document.getElementById('nxt').textContent='다음 스캔: '+(15-d.getMinutes()%15)+'분 후';
-}}
-
-render(); tick(); setInterval(tick,1000);
-</script>
-</body>
-</html>"""
-
-        try:
-            with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
-                f.write(html)
-            print(f"  HTML 갱신 완료: {HTML_OUTPUT}")
-        except Exception as e:
-            print(f"  HTML 갱신 실패: {e}")
+          <div class="sector-rate"
