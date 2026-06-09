@@ -46,25 +46,82 @@ mod4    = None
 # =============================================================
 # 전역 타이머
 # =============================================================
-timer_m1      = QTimer()   # 15분 주기
+timer_m1       = QTimer()   # 15분 주기
 condition_list = {}
+
+# 로그인 완료 여부 플래그
+_login_ok      = False
+_condition_ok  = False
+
+# =============================================================
+# ★ 로그인 타임아웃 감시 (60초)
+# - CommConnect() 후 60초 내 on_login이 안 오면 종료
+# =============================================================
+def _login_timeout():
+    if not _login_ok:
+        msg = (
+            "⚠️ 키움 로그인 응답 없음 (60초 타임아웃)\n"
+            "영웅문이 이미 실행 중이거나 자동 로그인 팝업 확인 필요\n"
+            "→ 재시작 대기 중..."
+        )
+        print(msg)
+        send_telegram(msg)
+        app.quit()
+
+login_timeout_timer = QTimer()
+login_timeout_timer.setSingleShot(True)
+login_timeout_timer.timeout.connect(_login_timeout)
+login_timeout_timer.start(60 * 1000)   # 60초
+
+# =============================================================
+# ★ 조건식 로드 타임아웃 감시 (30초)
+# - GetConditionLoad() 후 30초 내 on_condition_load가 안 오면 종료
+# =============================================================
+condition_timeout_timer = QTimer()
+condition_timeout_timer.setSingleShot(True)
+
+def _condition_timeout():
+    if not _condition_ok:
+        msg = (
+            "⚠️ 조건식 로드 응답 없음 (30초 타임아웃)\n"
+            "키움 서버 응답 지연 가능성\n"
+            "→ 재시작 대기 중..."
+        )
+        print(msg)
+        send_telegram(msg)
+        app.quit()
+
+condition_timeout_timer.timeout.connect(_condition_timeout)
 
 # =============================================================
 # 로그인
 # =============================================================
 def on_login(err_code: int):
+    global _login_ok
+    login_timeout_timer.stop()   # ★ 타임아웃 감시 해제
+
     if err_code == 0:
+        _login_ok = True
         print("로그인 성공!")
+        # 조건식 로드 타임아웃 감시 시작 (30초)
+        condition_timeout_timer.start(30 * 1000)
         QTimer.singleShot(1000, lambda:
             kiwoom.dynamicCall("GetConditionLoad()"))
     else:
         print(f"로그인 실패: {err_code}")
+        send_telegram(
+            f"❌ 키움 로그인 실패 (코드: {err_code})\n"
+            f"영웅문 상태 확인 후 재시작 필요"
+        )
+        QTimer.singleShot(3000, lambda: app.quit())   # ★ 정상 종료 유도
 
 # =============================================================
 # 조건식 로드 완료
 # =============================================================
 def on_condition_load():
-    global mod1, mod2_hw, mod2_gj, mod3, mod4
+    global mod1, mod2_hw, mod2_gj, mod3, mod4, _condition_ok
+    condition_timeout_timer.stop()   # ★ 타임아웃 감시 해제
+    _condition_ok = True
 
     result = kiwoom.dynamicCall("GetConditionNameList()")
     for c in result.split(';'):
@@ -74,6 +131,18 @@ def on_condition_load():
         if len(parts) >= 2:
             condition_list[parts[1]] = parts[0]
     print(f"조건식 로드: {list(condition_list.keys())}")
+
+    # 조건식이 하나도 없으면 비정상
+    if not condition_list:
+        msg = (
+            "⚠️ 조건식 목록이 비어 있음\n"
+            "키움 HTS에서 조건식 저장 상태 확인 필요\n"
+            "→ 재시작 대기 중..."
+        )
+        print(msg)
+        send_telegram(msg)
+        QTimer.singleShot(3000, lambda: app.quit())
+        return
 
     # 모듈 초기화
     mod1    = Module1Sector(kiwoom)
@@ -206,6 +275,10 @@ def on_chejan(gubun, item_cnt, fid_list):
 kiwoom.OnEventConnect.connect(on_login)
 kiwoom.OnReceiveConditionVer.connect(on_condition_load)
 kiwoom.OnReceiveRealData.connect(on_realtime_data)
-kiwoom.dynamicCall("CommConnect()")
 
-app.exec_()
+try:
+    kiwoom.dynamicCall("CommConnect()")
+    sys.exit(app.exec_())
+except Exception as e:
+    send_telegram(f"❌ condition_kiwoom 치명적 오류: {e}")
+    sys.exit(1)

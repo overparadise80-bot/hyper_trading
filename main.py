@@ -4,6 +4,11 @@ main.py - 하이퍼 트레이딩 시스템 구동부
 
 실행: python main.py
 
+★ 실행 순서 주의:
+   1. main.py 먼저 실행
+   2. 키움 영웅문 HTS는 condition_kiwoom이 로그인 완료 후 실행
+      (영웅문 먼저 켜면 OCX 로그인 충돌 가능)
+
 자동 구동:
 - telegram_bot.py : 즉시 (상시 구동 - Gemini 지능형 비서, 자동 재시작)
 - channel_monitor.py : 즉시 (상시 구동 - 텔레그램 채널 모니터링)
@@ -63,6 +68,11 @@ SCRIPTS = {
 
 # 실행 중인 프로세스 관리
 processes = {}
+
+# ★ condition_kiwoom 재시작 횟수 추적 (무한루프 방지)
+_restart_count   = {}
+_MAX_RESTART     = 5    # 최대 재시작 횟수
+_restart_blocked = set()  # 재시작 차단 목록
 
 # =============================================================
 # 유틸
@@ -162,6 +172,9 @@ def schedule_loop():
                 # 08:00 - 자동매매 시작 (venv32)
                 if should_run("condition_kiwoom", 8, 0):
                     print(f"[{now()}] 자동매매 시작! (venv32)")
+                    # ★ 하루 시작 시 재시작 카운터 초기화
+                    _restart_count["condition_kiwoom"] = 0
+                    _restart_blocked.discard("condition_kiwoom")
                     run_script("condition_kiwoom")
                     mark_done("condition_kiwoom")
 
@@ -188,8 +201,37 @@ def schedule_loop():
                     if name == "condition_kiwoom" and is_weekday():
                         now_dt = datetime.now()
                         if (8, 0) <= (now_dt.hour, now_dt.minute) <= (15, 30):
-                            print(f"[{now()}] condition_kiwoom 장중 자동 재시작!")
-                            time.sleep(10)  # 10초 대기 후 재시작
+
+                            # ★ 재시작 차단 여부 확인
+                            if name in _restart_blocked:
+                                print(f"[{now()}] condition_kiwoom 재시작 차단 중 - 수동 확인 필요")
+                                continue
+
+                            # ★ 재시작 횟수 확인
+                            cnt = _restart_count.get(name, 0) + 1
+                            _restart_count[name] = cnt
+
+                            if cnt > _MAX_RESTART:
+                                _restart_blocked.add(name)
+                                msg = (
+                                    f"🚨 condition_kiwoom 재시작 {cnt}회 초과\n"
+                                    f"자동 재시작 중단 - 수동 확인 필요\n"
+                                    f"(오늘 하루 재시작 차단)"
+                                )
+                                print(f"[{now()}] {msg}")
+                                # 텔레그램 직접 호출 (common import)
+                                try:
+                                    from modules.common import send_telegram
+                                    send_telegram(msg)
+                                except:
+                                    pass
+                                continue
+
+                            print(f"[{now()}] condition_kiwoom 장중 자동 재시작! ({cnt}/{_MAX_RESTART})")
+
+                            # ★ 60초 대기 (키움 서버 세션 정리 시간 확보)
+                            print(f"[{now()}] 60초 대기 후 재시작...")
+                            time.sleep(60)
                             run_script(name)
 
         except Exception as e:
@@ -215,6 +257,8 @@ def check_immediate():
 
     if (8, 0) <= now_hm <= (15, 30):
         print(f"[{now()}] 자동매매 즉시 실행! (venv32)")
+        _restart_count["condition_kiwoom"] = 0
+        _restart_blocked.discard("condition_kiwoom")
         run_script("condition_kiwoom")
         mark_done("condition_kiwoom")
 
@@ -233,6 +277,11 @@ def main():
     print(f"  Python: {PYTHON_NORMAL}")
     print(f"  venv32: {PYTHON_32}")
     print("=" * 55)
+    print()
+    print("  ★ 실행 순서 주의 ★")
+    print("  영웅문 HTS는 condition_kiwoom 로그인 완료 후 실행하세요.")
+    print("  (영웅문 먼저 켜면 OCX 로그인 충돌 가능)")
+    print()
 
     # 1. ★ 텔레그램 봇 (자동 재시작 루프 포함)
     print(f"[{now()}] Gemini 텔레그램 봇 시작...")
