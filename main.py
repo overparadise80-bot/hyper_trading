@@ -28,6 +28,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =============================================================
+# 로그 파일 설정 (터미널 + 파일 동시 출력)
+# =============================================================
+class _Tee:
+    def __init__(self, *streams):
+        self._streams = streams
+    def write(self, data):
+        for s in self._streams:
+            try:
+                s.write(data)
+                s.flush()
+            except Exception:
+                pass
+    def flush(self):
+        for s in self._streams:
+            try: s.flush()
+            except Exception: pass
+    def fileno(self):
+        return self._streams[0].fileno()
+
+def _setup_logging():
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"main_{datetime.now().strftime('%Y%m%d')}.log")
+    log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.__stdout__, log_file)
+    sys.stderr = _Tee(sys.__stderr__, log_file)
+    print(f"[로그] 파일 저장 시작: {log_path}")
+
+_setup_logging()
+
+# =============================================================
 # 경로 설정
 # =============================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
