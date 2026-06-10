@@ -458,12 +458,12 @@ body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:8px;}}
 .card-head{{background:#185fa5;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;}}
 .rank-badge{{background:#0c447c;color:#b5d4f4;font-size:10px;font-weight:500;padding:1px 6px;border-radius:4px;margin-right:6px;}}
 .sector-name{{color:#e6f1fb;font-size:13px;font-weight:500;}}
-.sector-rate{{font-size:14px;font-weight:600;}}
+.sector-rate{{font-size:13px;font-weight:700;padding:2px 8px;border-radius:4px;background:#dceefb;min-width:52px;text-align:center;}}
 .card-body{{padding:4px 8px;}}
 .stock-row{{padding:5px 0;border-bottom:0.5px solid #c8e0f7;}}
 .stock-row:last-child{{border-bottom:none;}}
 .stock-info{{display:flex;justify-content:space-between;align-items:baseline;}}
-.sname{{font-size:12px;color:#185fa5;font-weight:500;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.sname{{font-size:12px;color:#111;font-weight:700;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
 .sright{{display:flex;gap:6px;align-items:baseline;}}
 .sprice{{font-size:11px;color:#0c447c;}}
 .srate{{font-size:12px;font-weight:500;}}
@@ -522,8 +522,7 @@ function progLabel(prog){{
   if(prog === 0) return '';
   const sign  = prog > 0 ? '+' : '';
   const color = prog > 0 ? '#f5222d' : '#1677ff';
-  const label = prog > 0 ? '순매수' : '순매도';
-  return `<div class="prog-row" style="color:${{color}}">${{label}} ${{sign}}${{Math.abs(prog).toLocaleString()}}주</div>`;
+  return `<div class="prog-row" style="color:${{color}}">PR ${{sign}}${{Math.abs(prog).toLocaleString()}}주</div>`;
 }}
 
 function render(){{
