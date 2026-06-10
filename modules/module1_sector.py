@@ -180,12 +180,12 @@ class Module1Sector:
         k    = self.kiwoom
         try:
             buy_str  = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                      trcode, rqname, 0, "프로그램매수금액").strip()
+                                      trcode, rqname, 0, "프로그램매수수량").strip()
             sell_str = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                      trcode, rqname, 0, "프로그램매도금액").strip()
+                                      trcode, rqname, 0, "프로그램매도수량").strip()
             net = int(buy_str.replace(',','')) - int(sell_str.replace(',',''))
             if code in self.stock_data:
-                self.stock_data[code]["prog"] = net
+                self.stock_data[code]["prog"] = net  # 순매수 주수 (양수=순매수, 음수=순매도)
         except:
             pass
         QTimer.singleShot(200, lambda: self._scan_prog(self.prog_idx + 1))
@@ -453,33 +453,25 @@ body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:8px;}}
 .live-label{{color:#4ade80;font-size:11px;font-weight:500;}}
 .t-time{{color:#b5d4f4;font-size:12px;}}
 .t-next{{color:#85b7eb;font-size:11px;}}
-.legend{{display:flex;gap:10px;align-items:center;margin-bottom:6px;padding:4px 8px;background:#e4f0fb;border-radius:6px;}}
-.legend-item{{display:flex;align-items:center;gap:4px;font-size:11px;color:#185fa5;}}
-.legend-dot{{width:8px;height:8px;border-radius:2px;}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:7px;}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:7px;}}
 .card{{background:#f0f7ff;border:1px solid #b5d4f4;border-radius:8px;overflow:hidden;}}
-.card-head{{background:#185fa5;padding:7px 10px;display:flex;justify-content:space-between;align-items:center;}}
+.card-head{{background:#185fa5;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;}}
 .rank-badge{{background:#0c447c;color:#b5d4f4;font-size:10px;font-weight:500;padding:1px 6px;border-radius:4px;margin-right:6px;}}
 .sector-name{{color:#e6f1fb;font-size:13px;font-weight:500;}}
-.sector-meta{{text-align:right;}}
-.sector-rate{{font-size:14px;font-weight:500;}}
-.sector-sub{{color:#85b7eb;font-size:10px;}}
-.card-body{{padding:5px 8px;}}
-.stock-row{{padding:4px 0;border-bottom:0.5px solid #c8e0f7;}}
+.sector-rate{{font-size:14px;font-weight:600;}}
+.card-body{{padding:4px 8px;}}
+.stock-row{{padding:5px 0;border-bottom:0.5px solid #c8e0f7;}}
 .stock-row:last-child{{border-bottom:none;}}
-.stock-top{{display:flex;justify-content:space-between;align-items:center;}}
-.sname{{font-size:12px;color:#185fa5;max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
-.top1 .sname{{color:#0c447c;font-weight:500;}}
-.sright{{display:flex;gap:8px;align-items:center;}}
-.sprice{{font-size:11px;color:#0c447c;font-weight:500;}}
-.srate{{font-size:12px;}}
+.stock-info{{display:flex;justify-content:space-between;align-items:baseline;}}
+.sname{{font-size:12px;color:#185fa5;font-weight:500;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.sright{{display:flex;gap:6px;align-items:baseline;}}
+.sprice{{font-size:11px;color:#0c447c;}}
+.srate{{font-size:12px;font-weight:500;}}
 .samt{{font-size:10px;color:#378add;}}
-.prog-wrap{{margin-top:3px;display:flex;align-items:center;gap:4px;}}
-.prog-lbl{{font-size:9px;width:32px;flex-shrink:0;text-align:right;}}
-.prog-bg{{flex:1;height:5px;background:#dceefb;border-radius:3px;overflow:hidden;position:relative;}}
-.prog-center{{position:absolute;left:50%;top:0;width:1px;height:5px;background:#aac8e8;}}
-.prog-buy{{position:absolute;right:50%;top:0;height:5px;border-radius:3px 0 0 3px;background:#f5222d;}}
-.prog-sell{{position:absolute;left:50%;top:0;height:5px;border-radius:0 3px 3px 0;background:#1677ff;}}
+.candle-wrap{{position:relative;height:8px;background:#dceefb;border-radius:2px;margin:3px 0 2px;overflow:hidden;}}
+.candle-fill{{position:absolute;top:1px;height:6px;border-radius:1px;}}
+.candle-center{{position:absolute;left:50%;top:0;width:2px;height:8px;background:#111;transform:translateX(-50%);}}
+.prog-row{{font-size:10px;height:13px;}}
 .footer{{margin-top:7px;background:#0c447c;border-radius:8px;padding:5px 14px;display:flex;justify-content:space-between;align-items:center;}}
 .footer-txt{{color:#85b7eb;font-size:10px;}}
 .footer-hi{{color:#b5d4f4;font-weight:500;}}
@@ -494,42 +486,51 @@ body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:8px;}}
     <span class="t-next" id="nxt">다음 스캔: --분 후</span>
   </div>
 </div>
-<div class="legend">
-  <span class="legend-item"><span class="legend-dot" style="background:#f5222d"></span>프로그램 순매수 (←)</span>
-  <span class="legend-item"><span class="legend-dot" style="background:#1677ff"></span>프로그램 순매도 (→)</span>
-  <span class="legend-item" style="color:#888">| 바 너비 = 절대금액 비례 | 15분 자동갱신</span>
-</div>
 <div class="grid" id="grid"></div>
 <div class="footer">
   <span class="footer-txt">스캔: <span class="footer-hi">{scan_time}</span></span>
   <span class="footer-txt">단순 평균 등락률 · 테마 TOP7</span>
-  <span class="footer-txt">프로그램: opt10059 당일 누적</span>
+  <span class="footer-txt">프로그램: opt10059 당일 누적 주수</span>
 </div>
 
 <script>
 const SECTORS = {data_json};
 const medals = ['🥇','🥈','🥉','4위','5위','6위','7위'];
+const MAX_RATE = 30;
 
 function rc(r){{ return r>0?'#f5222d':r<0?'#1677ff':'#8c8c8c'; }}
 function fr(r){{ return (r>0?'+':'')+r.toFixed(2)+'%'; }}
 function fa(a){{
-  if(a>=10000) return (a/10000).toFixed(1)+'조';
-  if(a>=1000)  return (a/100).toFixed(0)+'백억';
+  if(a>=10000) return Math.floor(a/10000)+'조';
+  if(a>=1000)  return Math.floor(a/100)+'백억';
   return a+'억';
 }}
-function fp(p){{ return p===0?'0':(p>0?'+':'')+p+'억'; }}
 function fpr(p){{ return p.toLocaleString()+'원'; }}
 
+function candleBar(rate){{
+  const clipped = Math.max(-MAX_RATE, Math.min(MAX_RATE, rate));
+  const halfPct = Math.abs(clipped) / MAX_RATE * 50;
+  const color   = clipped >= 0 ? '#f5222d' : '#1677ff';
+  const left    = clipped >= 0 ? 50 : (50 - halfPct);
+  return `<div class="candle-wrap">
+    <div class="candle-fill" style="left:${{left}}%;width:${{halfPct}}%;background:${{color}}"></div>
+    <div class="candle-center"></div>
+  </div>`;
+}}
+
+function progLabel(prog){{
+  if(prog === 0) return '';
+  const sign  = prog > 0 ? '+' : '';
+  const color = prog > 0 ? '#f5222d' : '#1677ff';
+  const label = prog > 0 ? '순매수' : '순매도';
+  return `<div class="prog-row" style="color:${{color}}">${{label}} ${{sign}}${{Math.abs(prog).toLocaleString()}}주</div>`;
+}}
+
 function render(){{
-  const maxP = Math.max(...SECTORS.flatMap(s=>s.stocks.map(st=>Math.abs(st.prog))));
   document.getElementById('grid').innerHTML = SECTORS.map((sec,si)=>{{
-    const rows = [...sec.stocks].sort((a,b)=>b.rate-a.rate).map((st,i)=>{{
-      const pct = maxP>0 ? Math.min(48,Math.round(Math.abs(st.prog)/maxP*48)) : 0;
-      const buy  = st.prog>0 ? `<div class="prog-buy"  style="width:${{pct}}%"></div>` : '';
-      const sell = st.prog<0 ? `<div class="prog-sell" style="width:${{pct}}%"></div>` : '';
-      const pc   = st.prog===0?'#aaa':st.prog>0?'#f5222d':'#1677ff';
-      return `<div class="stock-row${{i===0?' top1':''}}">
-        <div class="stock-top">
+    const rows = [...sec.stocks].sort((a,b)=>b.rate-a.rate).map((st)=>{{
+      return `<div class="stock-row">
+        <div class="stock-info">
           <span class="sname">${{st.name}}</span>
           <div class="sright">
             <span class="sprice">${{fpr(st.price)}}</span>
@@ -537,23 +538,17 @@ function render(){{
             <span class="samt">${{fa(st.amt)}}</span>
           </div>
         </div>
-        <div class="prog-wrap">
-          <span class="prog-lbl" style="color:${{pc}}">${{fp(st.prog)}}</span>
-          <div class="prog-bg"><div class="prog-center"></div>${{buy}}${{sell}}</div>
-        </div>
+        ${{candleBar(st.rate)}}
+        ${{progLabel(st.prog)}}
       </div>`;
     }}).join('');
     return `<div class="card">
       <div class="card-head">
         <div><span class="rank-badge">${{medals[si]||si+1+'위'}}</span><span class="sector-name">${{sec.name}}</span></div>
-        <div class="sector-meta">
-          <div class="sector-rate" style="color:${{rc(sec.rate)}}">${{fr(sec.rate)}}</div>
-          <div class="sector-sub">${{fa(sec.amt)}} | ↑${{sec.up_ratio}}%</div>
-        </div>
+        <span class="sector-rate" style="color:${{rc(sec.rate)}}">${{fr(sec.rate)}}</span>
       </div>
-    </div>
-    <div class="card-body">${{rows}}</div>
-  </div>`;
+      <div class="card-body">${{rows}}</div>
+    </div>`;
   }}).join('');
 }}
 render();
