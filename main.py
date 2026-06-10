@@ -155,10 +155,23 @@ def run_script(name: str):
         return
 
     try:
-        proc = subprocess.Popen(
-            [python_exe, script_path],
-            creationflags=subprocess.CREATE_NEW_CONSOLE
-        )
+        if name == "condition_kiwoom":
+            # kiwoom은 자체 로그 있음, 별도 콘솔 창 유지
+            proc = subprocess.Popen(
+                [python_exe, script_path],
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        else:
+            # 나머지 스크립트는 logs/ 에 출력 캡처
+            log_dir  = os.path.join(BASE_DIR, "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, f"{name}_{datetime.now().strftime('%Y%m%d')}.log")
+            log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+            proc = subprocess.Popen(
+                [python_exe, "-X", "utf8", script_path],
+                stdout=log_file,
+                stderr=log_file,
+            )
         processes[name] = proc
         print(f"[{now()}] {name} 시작 (PID: {proc.pid})")
     except Exception as e:

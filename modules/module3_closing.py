@@ -71,7 +71,7 @@ class Module3Closing:
         self.candidate_codes = [c for c in code_list.split(';') if c]
         print(f"  조건식 결과: {len(self.candidate_codes)}개")
         if not self.candidate_codes:
-            send_telegram("모듈3: 조건검색 결과 없음")
+            self._send_empty_briefing("조건검색 결과 없음")
             return
         try:
             self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_basic)
@@ -135,7 +135,7 @@ class Module3Closing:
             pass
         passed = list(self.candidate_data.keys())
         if not passed:
-            send_telegram("모듈3: 1차 필터 통과 종목 없음")
+            self._send_empty_briefing("기본 필터 통과 종목 없음\n(등락률 5%미만 + 양봉 + 윗꼬리 조건)")
             return
         self.inst_queue = passed
         try:
@@ -186,11 +186,20 @@ class Module3Closing:
         )[:M3_MAX_STOCKS]
 
         if not passed:
-            send_telegram("모듈3: 기관 순매수 조건 통과 종목 없음")
+            self._send_empty_briefing(f"기관 순매수 {M3_INST_MIN}일+ 조건 통과 종목 없음")
             return
 
         self.final_list = passed
         self._enter_all()
+
+    def _send_empty_briefing(self, reason: str):
+        now = datetime.now().strftime("%m/%d %H:%M")
+        msg = (f"<b>📊 종가베팅 브리핑</b>  {now}\n"
+               f"━━━━━━━━━━━━━━━━━━━━\n\n"
+               f"해당 종목 없음\n"
+               f"<i>{reason}</i>")
+        print(f"[모듈3] {reason}")
+        send_telegram(msg)
 
     def _enter_all(self):
         now = datetime.now().strftime("%m/%d %H:%M")

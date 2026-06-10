@@ -2,7 +2,7 @@
 """
 module1_sector.py v3 - 주도섹터 + 52주신고가 브리핑
 - [PHASE1+2] 전체 종목 현재가/등락률/거래대금 TR 조회
-- [PHASE3]   테마별 거래대금 가중 평균 등락률 집계 → TOP7
+- [PHASE3]   테마별 단순 평균 등락률 집계 → TOP7
 - [PHASE4]   프로그램 매매 조회 (opt10059)
 - [PHASE5]   52주신고가 조건검색 + 상세 조회
 - [PHASE6]   브리핑 생성 + HTML 갱신 + 텔레그램 전송
@@ -42,11 +42,12 @@ class Module1Sector:
 
     def reset(self):
         self.stock_data      = {}
-        self.scan_queue      = []
+        self._batches        = []
         self.scan_idx        = 0
         self.theme_ranking   = []
         self.prog_queue      = []
         self.prog_idx        = 0
+        self._prog_done      = False
         self.shingoga_codes  = []
         self.shingoga_detail = {}
         self.shingoga_idx    = 0
@@ -57,9 +58,9 @@ class Module1Sector:
     def start_scan(self):
         self.reset()
         print(f"\n[모듈1] 스캔 시작 - 대상 {len(ALL_CODES)}종목")
-        self._connect(self._on_tr_stock)
-        self.scan_queue = list(ALL_CODES)
-        QTimer.singleShot(300, lambda: self._scan_stock(0))
+        self._connect(self._on_kw_data)
+        self._batches = [ALL_CODES[i:i+100] for i in range(0, len(ALL_CODES), 100)]
+        QTimer.singleShot(300, lambda: self._scan_batch(0))
 
     def _connect(self, slot):
         try:
@@ -69,52 +70,40 @@ class Module1Sector:
         self.kiwoom.OnReceiveTrData.connect(slot)
 
     # ==========================================================
-    # PHASE1+2: 종목별 현재가/등락률/거래대금
+    # PHASE1+2: CommKwRqData 배치 조회 (100종목씩)
     # ==========================================================
-    def _scan_stock(self, idx):
+    def _scan_batch(self, idx):
         self.scan_idx = idx
-        if idx >= len(self.scan_queue):
+        if idx >= len(self._batches):
             self._phase2_done()
             return
-        code = self.scan_queue[idx]
-        if code in self.stock_data:
-            QTimer.singleShot(0, lambda: self._scan_stock(idx + 1))
-            return
+        batch = self._batches[idx]
+        print(f"  배치 스캔: {idx * 100}/{len(ALL_CODES)} ({idx + 1}/{len(self._batches)}배치)")
         self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "CommRqData(QString, QString, int, QString)",
-            "주식현재가요청", "opt10001", 0, "0110")
+            "CommKwRqData(QString, bool, int, int, QString, QString)",
+            ";".join(batch), False, len(batch), 0, "복수종목조회", "0301"
+        )
 
-    def _on_tr_stock(self, screen, rqname, trcode, recordname, prev_next, *args):
-        if rqname != "주식현재가요청":
+    def _on_kw_data(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if rqname != "복수종목조회":
             return
-        code = self.scan_queue[self.scan_idx]
-        k    = self.kiwoom
-        name      = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                   trcode, rqname, 0, "종목명").strip()
-        rate_str  = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                   trcode, rqname, 0, "등락율").strip()
-        price_str = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                   trcode, rqname, 0, "현재가").strip()
-        amt_str   = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                   trcode, rqname, 0, "거래대금").strip()
-        try:
-            self.stock_data[code] = {
-                "name":   name,
-                "rate":   float(rate_str),
-                "price":  abs(int(price_str)),
-                "amount": abs(int(amt_str)) // 100000000,
-                "prog":   0,
-            }
-        except:
-            self.stock_data[code] = {
-                "name": name, "rate": 0.0,
-                "price": 0, "amount": 0, "prog": 0}
-
-        if self.scan_idx % 100 == 0:
-            print(f"  종목 스캔: {self.scan_idx}/{len(self.scan_queue)}")
-        QTimer.singleShot(200, lambda: self._scan_stock(self.scan_idx + 1))
+        cnt = self.kiwoom.dynamicCall("GetRepeatCnt(QString, QString)", trcode, rqname)
+        k   = self.kiwoom
+        for i in range(cnt):
+            try:
+                code   = k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "종목코드").strip()
+                name   = k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "종목명").strip()
+                rate   = float(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "등락율").strip())
+                price  = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "현재가").strip()))
+                volume = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "거래량").strip() or "0"))
+                amount = (volume * price) // 100_000_000  # 거래량×현재가 → 억원
+                self.stock_data[code] = {
+                    "name": name, "rate": rate, "price": price,
+                    "amount": amount, "prog": 0,
+                }
+            except:
+                pass
+        QTimer.singleShot(300, lambda: self._scan_batch(self.scan_idx + 1))
 
     # ==========================================================
     # PHASE2 완료 → 테마 집계 → 프로그램 매매 조회
@@ -129,12 +118,14 @@ class Module1Sector:
                 if s["code"] not in prog_codes:
                     prog_codes.append(s["code"])
         self.prog_queue = prog_codes
+        self._prog_done = False
         print(f"[모듈1] 프로그램 매매 조회 ({len(self.prog_queue)}종목)...")
         self._connect(self._on_tr_prog)
-        QTimer.singleShot(300, lambda: self._scan_prog(0))
+        QTimer.singleShot(120000, self._prog_timeout)
+        QTimer.singleShot(15000, lambda: self._scan_prog(0))  # CommKwRqData 쿨다운 후 시작
 
     # ==========================================================
-    # PHASE3: 테마별 거래대금 가중 평균 등락률 집계
+    # PHASE3: 테마별 단순 평균 등락률 집계
     # ==========================================================
     def _calc_theme_ranking(self):
         theme_perf = []
@@ -146,23 +137,18 @@ class Module1Sector:
             if len(stocks) < THEME_MIN_STOCKS:
                 continue
             total_amount = sum(s["amount"] for s in stocks)
-            if total_amount > 0:
-                weighted_rate = sum(
-                    s["rate"] * s["amount"] for s in stocks
-                ) / total_amount
-            else:
-                weighted_rate = sum(s["rate"] for s in stocks) / len(stocks)
+            avg_rate = sum(s["rate"] for s in stocks) / len(stocks)
             up_count = sum(1 for s in stocks if s["rate"] > 0)
             theme_perf.append({
-                "theme":         tname,
-                "total_amount":  total_amount,
-                "weighted_rate": weighted_rate,
-                "up_ratio":      up_count / len(stocks),
-                "stock_count":   len(stocks),
+                "theme":        tname,
+                "total_amount": total_amount,
+                "avg_rate":     avg_rate,
+                "up_ratio":     up_count / len(stocks),
+                "stock_count":  len(stocks),
                 "stocks": sorted(stocks, key=lambda x: x["rate"], reverse=True),
             })
         self.theme_ranking = sorted(
-            theme_perf, key=lambda x: x["weighted_rate"], reverse=True)
+            theme_perf, key=lambda x: x["avg_rate"], reverse=True)
         top3 = [t["theme"][:8] for t in self.theme_ranking[:3]]
         print(f"  테마 집계 완료. TOP3: {top3}")
 
@@ -175,17 +161,17 @@ class Module1Sector:
             self._phase4_done()
             return
         code = self.prog_queue[idx]
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "금액수량구분", "2")
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "매매구분", "0")
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "단위구분", "1")
-        self.kiwoom.dynamicCall(
+        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
+        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "금액수량구분", "2")
+        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "매매구분", "0")
+        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "단위구분", "1")
+        ret = self.kiwoom.dynamicCall(
             "CommRqData(QString, QString, int, QString)",
             "프로그램매매요청", "opt10059", 0, "0120")
+        if ret != 0:
+            # TR 오류 → 대기 없이 다음 종목으로
+            print(f"  opt10059 오류({ret}): {code} 스킵")
+            QTimer.singleShot(0, lambda: self._scan_prog(self.prog_idx + 1))
 
     def _on_tr_prog(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "프로그램매매요청":
@@ -204,10 +190,18 @@ class Module1Sector:
             pass
         QTimer.singleShot(200, lambda: self._scan_prog(self.prog_idx + 1))
 
+    def _prog_timeout(self):
+        if not self._prog_done:
+            print(f"  [경고] Phase4 타임아웃 → Phase5 강제 진행 ({self.prog_idx}/{len(self.prog_queue)})")
+            self._phase4_done()
+
     # ==========================================================
     # PHASE4 완료 → 테마 종목 prog 값 갱신 → 52주신고가
     # ==========================================================
     def _phase4_done(self):
+        if self._prog_done:
+            return
+        self._prog_done = True
         for t in self.theme_ranking:
             for s in t["stocks"]:
                 s["prog"] = self.stock_data.get(s["code"], {}).get("prog", 0)
@@ -334,7 +328,7 @@ class Module1Sector:
         # ── 텔레그램 메시지1: 주도섹터
         medals = ["🥇","🥈","🥉","4위","5위","6위","7위"]
         msg1 = f"<b>📊 테마 주도섹터 TOP{THEME_TOP_N}</b>  {now}\n"
-        msg1 += "거래대금 가중 등락률 기준\n"
+        msg1 += "단순 평균 등락률 기준\n"
         msg1 += "━━━━━━━━━━━━━━━━━━━━\n\n"
         for i, t in enumerate(self.theme_ranking[:THEME_TOP_N]):
             medal   = medals[i] if i < len(medals) else f"{i+1}위"
@@ -342,7 +336,7 @@ class Module1Sector:
                        if t['total_amount'] >= 100
                        else f"{t['total_amount']}억")
             msg1 += (f"{medal} <b>{t['theme']}</b>\n"
-                     f"   가중등락 <b>{t['weighted_rate']:+.2f}%</b>  "
+                     f"   등락 <b>{t['avg_rate']:+.2f}%</b>  "
                      f"거래대금 {amt_str}  "
                      f"상승 {t['up_ratio']*100:.0f}%\n")
             for s in t["stocks"][:THEME_STOCK_TOP]:
@@ -434,7 +428,7 @@ class Module1Sector:
                 })
             sectors_js.append({
                 "name":     t["theme"],
-                "rate":     round(t["weighted_rate"], 2),
+                "rate":     round(t["avg_rate"], 2),
                 "amt":      t["total_amount"],
                 "up_ratio": round(t["up_ratio"], 2),
                 "stocks":   stocks_js,
@@ -508,7 +502,7 @@ body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:8px;}}
 <div class="grid" id="grid"></div>
 <div class="footer">
   <span class="footer-txt">스캔: <span class="footer-hi">{scan_time}</span></span>
-  <span class="footer-txt">거래대금 가중 평균 등락률 · 테마 TOP7</span>
+  <span class="footer-txt">단순 평균 등락률 · 테마 TOP7</span>
   <span class="footer-txt">프로그램: opt10059 당일 누적</span>
 </div>
 
@@ -553,4 +547,27 @@ function render(){{
       <div class="card-head">
         <div><span class="rank-badge">${{medals[si]||si+1+'위'}}</span><span class="sector-name">${{sec.name}}</span></div>
         <div class="sector-meta">
-          <div class="sector-rate"
+          <div class="sector-rate" style="color:${{rc(sec.rate)}}">${{fr(sec.rate)}}</div>
+          <div class="sector-sub">${{fa(sec.amt)}} | ↑${{sec.up_ratio}}%</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">${{rows}}</div>
+  </div>`;
+  }}).join('');
+}}
+render();
+setInterval(render, 5000);
+
+function tick(){{
+  document.getElementById('cur-time').textContent = new Date().toLocaleTimeString('ko-KR',{{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}});
+}}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>"""
+
+        with open(HTML_OUTPUT, "w", encoding="utf-8") as fh:
+            fh.write(html)
+        print(f"  HTML 갱신: {HTML_OUTPUT}")

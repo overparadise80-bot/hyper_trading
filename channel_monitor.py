@@ -15,6 +15,12 @@ from telethon.tl.types import Channel, Chat
 
 load_dotenv()
 
+import sys as _sys
+if hasattr(_sys.stdout, 'reconfigure'):
+    _sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(_sys.stderr, 'reconfigure'):
+    _sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 TELEGRAM_API_ID   = int(os.getenv("TELEGRAM_API_ID"))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
