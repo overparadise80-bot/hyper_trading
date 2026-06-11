@@ -25,6 +25,12 @@ class Module2Gdjum:
         self.status    = {}
         self.vol_queue = []
         self.vol_idx   = 0
+        self._tr_handler = None
+        self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
+
+    def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if self._tr_handler:
+            self._tr_handler(screen, rqname, trcode, recordname, prev_next, *args)
 
     def on_enter(self, code: str, now_str: str):
         """조건검색 편입 시 호출"""
@@ -43,13 +49,9 @@ class Module2Gdjum:
             "order_sent":  False,
             "name":        "",
             "screen":      tm.next_screen(),
-            "enter_time":  datetime.now(),  # ★ 편입 시각 기록
+            "enter_time":  datetime.now(),
         }
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_basic)
-        except:
-            pass
-        self.kiwoom.OnReceiveTrData.connect(self._on_tr_basic)
+        self._tr_handler = self._on_tr_basic
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
         self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
                                 "전일고점기본정보", "opt10001", 0, "0601")
@@ -62,10 +64,7 @@ class Module2Gdjum:
     def _on_tr_basic(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "전일고점기본정보":
             return
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_basic)
-        except:
-            pass
+        self._tr_handler = None
         code = next((c for c, s in self.status.items()
                      if s["prev_high"] == 0 and s["name"] == ""), None)
         if not code:
@@ -199,11 +198,7 @@ class Module2Gdjum:
         if code not in self.status:
             QTimer.singleShot(300, lambda: self._fetch_vol(idx+1))
             return
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_vol)
-        except:
-            pass
-        self.kiwoom.OnReceiveTrData.connect(self._on_tr_vol)
+        self._tr_handler = self._on_tr_vol
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "틱범위", "5")
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "수정주가구분", "1")
@@ -213,10 +208,7 @@ class Module2Gdjum:
     def _on_tr_vol(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "전일고점분봉조회":
             return
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_vol)
-        except:
-            pass
+        self._tr_handler = None
         if self.vol_idx >= len(self.vol_queue):
             return
         code = self.vol_queue[self.vol_idx]

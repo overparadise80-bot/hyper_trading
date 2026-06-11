@@ -22,10 +22,55 @@ import threading
 import time
 import os
 import sys
+import atexit
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# =============================================================
+# ★ 단일 인스턴스 잠금 (중복 실행 방지)
+# =============================================================
+_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "main.lock")
+
+def _is_pid_alive(pid: int) -> bool:
+    try:
+        import ctypes
+        PROCESS_QUERY_INFORMATION = 0x0400
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+        if handle == 0:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    except Exception:
+        return False
+
+def _check_single_instance():
+    os.makedirs(os.path.dirname(_LOCK_FILE), exist_ok=True)
+    if os.path.exists(_LOCK_FILE):
+        try:
+            with open(_LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid != os.getpid() and _is_pid_alive(pid):
+                print(f"[경고] main.py 이미 실행 중 (PID: {pid}) - 중복 실행 차단")
+                sys.exit(0)
+        except Exception:
+            pass
+    with open(_LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def _release_lock():
+    try:
+        if os.path.exists(_LOCK_FILE):
+            with open(_LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(_LOCK_FILE)
+    except Exception:
+        pass
+
+_check_single_instance()
+atexit.register(_release_lock)
 
 # =============================================================
 # 로그 파일 설정 (터미널 + 파일 동시 출력)

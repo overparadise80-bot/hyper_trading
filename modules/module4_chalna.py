@@ -19,6 +19,13 @@ class Module4Chalna:
         self.cache       = {}   # {코드: 실시간 데이터}
         self.alerted     = {}   # {코드: datetime}
         self.refresh_timer = QTimer()
+        self._paused     = False  # 모듈1 스캔 중 구독 차단 플래그
+        self._tr_handler = None
+        self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
+
+    def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if self._tr_handler:
+            self._tr_handler(screen, rqname, trcode, recordname, prev_next, *args)
 
     def start(self):
         self._fetch_top100()
@@ -29,11 +36,7 @@ class Module4Chalna:
     def _fetch_top100(self):
         if not is_m4_open():
             return
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_top100)
-        except:
-            pass
-        self.kiwoom.OnReceiveTrData.connect(self._on_tr_top100)
+        self._tr_handler = self._on_tr_top100
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "시장구분", "000")
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "정렬구분", "2")
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "관리종목포함", "0")
@@ -44,10 +47,7 @@ class Module4Chalna:
     def _on_tr_top100(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "거래량상위요청":
             return
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_top100)
-        except:
-            pass
+        self._tr_handler = None
         new_codes = []
         for i in range(TOP_N):
             try:
@@ -72,7 +72,23 @@ class Module4Chalna:
         print(f"  [모듈4] top100 갱신: {len(self.top100)}개")
         QTimer.singleShot(500, self._subscribe)
 
+    def pause_realtime(self):
+        """모듈1 스캔 중 실시간 구독 완전 차단"""
+        self._paused = True
+        try:
+            self.kiwoom.dynamicCall("SetRealRemove(QString, QString)", "9100", "ALL")
+        except:
+            pass
+        print("  [모듈4] 실시간 구독 일시 중단 (스캔 중)")
+
+    def resume_realtime(self):
+        """모듈1 스캔 완료 후 실시간 구독 복구"""
+        self._paused = False
+        QTimer.singleShot(2000, self._subscribe)
+
     def _subscribe(self):
+        if self._paused:
+            return
         if not self.top100:
             return
         self.kiwoom.dynamicCall("SetRealRemove(QString, QString)", "9100", "ALL")

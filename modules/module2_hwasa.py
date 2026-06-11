@@ -16,6 +16,12 @@ class Module2Hwasa:
         self.cache     = {}   # {코드: {name, time, notified}}
         self.detail_queue = []
         self.detail_idx   = 0
+        self._tr_handler  = None
+        self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
+
+    def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if self._tr_handler:
+            self._tr_handler(screen, rqname, trcode, recordname, prev_next, *args)
 
     def on_enter(self, code: str, now_str: str):
         """조건검색 편입 시 호출"""
@@ -40,13 +46,10 @@ class Module2Hwasa:
         self.detail_idx = idx
         if idx >= len(self.detail_queue):
             self.detail_queue.clear()
+            self._tr_handler = None
             return
         code = self.detail_queue[idx]
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_detail)
-        except:
-            pass
-        self.kiwoom.OnReceiveTrData.connect(self._on_tr_detail)
+        self._tr_handler = self._on_tr_detail
         self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
         self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
                                 "황사장편입상세", "opt10001", 0, "0501")
@@ -54,10 +57,7 @@ class Module2Hwasa:
     def _on_tr_detail(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "황사장편입상세":
             return
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_detail)
-        except:
-            pass
+        self._tr_handler = None
         code      = self.detail_queue[self.detail_idx]
         k         = self.kiwoom
         name      = k.dynamicCall("GetCommData(QString,QString,int,QString)",

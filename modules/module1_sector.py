@@ -12,7 +12,7 @@ module1_sector.py v3 - 주도섹터 + 52주신고가 브리핑
 import json
 import os
 import requests as req
-from datetime import datetime
+from datetime import datetime, timedelta
 from PyQt5.QtCore import QTimer
 from modules.common import *
 from screenshot_sender import send_screenshot_to_telegram
@@ -35,6 +35,10 @@ class Module1Sector:
     def __init__(self, kiwoom):
         self.kiwoom = kiwoom
         self._condition_list = {}
+        self._tr_handler   = None
+        self._cond_handler = None
+        self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
+        self.kiwoom.OnReceiveTrCondition.connect(self._on_cond_dispatch)
         self.reset()
 
     def set_condition_list(self, condition_list: dict):
@@ -51,23 +55,27 @@ class Module1Sector:
         self.shingoga_codes  = []
         self.shingoga_detail = {}
         self.shingoga_idx    = 0
+        self._tr_handler     = None
+        self._on_complete    = None
 
     # ==========================================================
     # 외부 진입점
     # ==========================================================
-    def start_scan(self):
+    def start_scan(self, on_complete=None):
         self.reset()
+        self._on_complete = on_complete
         print(f"\n[모듈1] 스캔 시작 - 대상 {len(ALL_CODES)}종목")
-        self._connect(self._on_kw_data)
+        self._tr_handler = self._on_kw_data
         self._batches = [ALL_CODES[i:i+100] for i in range(0, len(ALL_CODES), 100)]
         QTimer.singleShot(300, lambda: self._scan_batch(0))
 
-    def _connect(self, slot):
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect()
-        except:
-            pass
-        self.kiwoom.OnReceiveTrData.connect(slot)
+    def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if self._tr_handler:
+            self._tr_handler(screen, rqname, trcode, recordname, prev_next, *args)
+
+    def _on_cond_dispatch(self, screen, code_list, condition_name, idx, prev_next):
+        if self._cond_handler:
+            self._cond_handler(screen, code_list, condition_name, idx, prev_next)
 
     # ==========================================================
     # PHASE1+2: CommKwRqData 배치 조회 (100종목씩)
@@ -119,10 +127,7 @@ class Module1Sector:
                     prog_codes.append(s["code"])
         self.prog_queue = prog_codes
         self._prog_done = False
-        print(f"[모듈1] 프로그램 매매 조회 ({len(self.prog_queue)}종목)...")
-        self._connect(self._on_tr_prog)
-        QTimer.singleShot(120000, self._prog_timeout)
-        QTimer.singleShot(15000, lambda: self._scan_prog(0))  # CommKwRqData 쿨다운 후 시작
+        self._phase4_done()
 
     # ==========================================================
     # PHASE3: 테마별 단순 평균 등락률 집계
@@ -206,11 +211,8 @@ class Module1Sector:
             for s in t["stocks"]:
                 s["prog"] = self.stock_data.get(s["code"], {}).get("prog", 0)
 
+        self._tr_handler = None
         print("[모듈1] 52주신고가 조건검색...")
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect()
-        except:
-            pass
         try:
             self.kiwoom.OnReceiveTrCondition.disconnect(self._on_shingoga_condition)
         except:
@@ -244,7 +246,7 @@ class Module1Sector:
 
     def _phase5_done(self, codes):
         self.shingoga_codes = codes
-        self._connect(self._on_tr_shingoga)
+        self._tr_handler = self._on_tr_shingoga
         QTimer.singleShot(300, lambda: self._scan_shingoga(0))
 
     def _scan_shingoga(self, idx):
@@ -293,10 +295,7 @@ class Module1Sector:
     # PHASE6: 브리핑 생성
     # ==========================================================
     def _phase6_done(self):
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect()
-        except:
-            pass
+        self._tr_handler = None
         print("[모듈1] 브리핑 생성...")
         self._build_and_send()
 
@@ -317,8 +316,26 @@ class Module1Sector:
         return ""
 
     def _build_and_send(self):
-        now     = datetime.now().strftime("%m/%d %H:%M")
-        now_sec = datetime.now().strftime("%H:%M:%S")
+        # 재시작 직후 중복 전송 방지: 마지막 전송 후 12분 이내면 스킵
+        now_dt   = datetime.now()
+        ts_file  = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "logs", "m1_last_sent.txt")
+        try:
+            with open(ts_file, "r") as f:
+                last_ts = datetime.fromisoformat(f.read().strip())
+            if (now_dt - last_ts) < timedelta(minutes=12):
+                elapsed = int((now_dt - last_ts).total_seconds() / 60)
+                print(f"  [스킵] 마지막 전송 {elapsed}분 전 - 중복 전송 방지")
+                if self._on_complete:
+                    QTimer.singleShot(1000, self._on_complete)
+                return
+        except Exception:
+            pass
+        with open(ts_file, "w") as f:
+            f.write(now_dt.isoformat())
+
+        now     = now_dt.strftime("%m/%d %H:%M")
+        now_sec = now_dt.strftime("%H:%M:%S")
 
         top_theme_codes = set()
         for t in self.theme_ranking[:THEME_TOP_N]:
@@ -406,6 +423,8 @@ class Module1Sector:
         QTimer.singleShot(4000, lambda: send_screenshot_to_telegram(caption))
 
         print(f"  모듈1 완료! [{now}]")
+        if self._on_complete:
+            QTimer.singleShot(1000, self._on_complete)
 
     # ==========================================================
     # HTML 파일 갱신 (브라우저 자동 새로고침)

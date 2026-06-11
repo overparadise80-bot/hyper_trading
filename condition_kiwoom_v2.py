@@ -202,11 +202,11 @@ def on_condition_load():
     # 모듈3 타이머
     QTimer.singleShot(1500, mod3.setup_timer)
 
-    # 모듈4 시작
-    QTimer.singleShot(2000, mod4.start)
+    # 모듈4 시작 (테스트: 비활성화)
+    # QTimer.singleShot(2000, mod4.start)
 
     # 모듈1 초기 실행
-    QTimer.singleShot(2500, lambda: on_interval_m1())
+    QTimer.singleShot(10000, lambda: on_interval_m1())
 
     print("전체 모듈 초기화 완료!")
     send_telegram("<b>하이퍼 트레이딩 시스템 시작!</b>\n모듈1~4 전체 가동")
