@@ -35,13 +35,13 @@ _LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "m
 
 def _is_pid_alive(pid: int) -> bool:
     try:
-        import ctypes
-        PROCESS_QUERY_INFORMATION = 0x0400
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
-        if handle == 0:
-            return False
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return True
+        import subprocess as _sp
+        out = _sp.check_output(
+            ['tasklist', '/FI', f'PID eq {pid}', '/NH', '/FO', 'CSV'],
+            text=True, stderr=_sp.DEVNULL, timeout=5,
+            creationflags=0x08000000  # CREATE_NO_WINDOW
+        )
+        return str(pid) in out
     except Exception:
         return False
 
@@ -68,6 +68,18 @@ def _release_lock():
                 os.remove(_LOCK_FILE)
     except Exception:
         pass
+
+# venv32 체크를 _check_single_instance보다 먼저 실행
+# → 시스템Python이면 락파일 건드리지 않고 즉시 재실행
+_VENV32_EARLY = r"C:\HyperTrading\venv32\Scripts\python.exe"
+if os.path.exists(_VENV32_EARLY):
+    if os.path.abspath(sys.executable).lower() != os.path.abspath(_VENV32_EARLY).lower():
+        print(f"[재실행] 시스템Python 감지 → venv32로 재시작...")
+        subprocess.Popen(
+            [_VENV32_EARLY] + sys.argv,
+            creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+        sys.exit(0)
 
 _check_single_instance()
 atexit.register(_release_lock)
@@ -108,17 +120,16 @@ _setup_logging()
 # =============================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 일반 Python (현재 가상환경)
-PYTHON_NORMAL = sys.executable
+_VENV32 = r"C:\HyperTrading\venv32\Scripts\python.exe"
 
-# 32비트 Python (키움 API 전용)
-PYTHON_32 = r"C:\HyperTrading\venv32\Scripts\python.exe"
-
-# venv32 없으면 현재 Python으로 대체 (경고 출력)
-if not os.path.exists(PYTHON_32):
-    print(f"[경고] venv32 없음: {PYTHON_32}")
+if os.path.exists(_VENV32):
+    PYTHON_NORMAL = _VENV32
+    PYTHON_32     = _VENV32
+else:
+    print(f"[경고] venv32 없음: {_VENV32}")
     print(f"       condition_kiwoom.py는 수동으로 venv32에서 실행하세요!")
-    PYTHON_32 = PYTHON_NORMAL
+    PYTHON_NORMAL = sys.executable
+    PYTHON_32     = sys.executable
 
 # =============================================================
 # 스크립트 설정

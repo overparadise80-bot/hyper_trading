@@ -270,15 +270,15 @@ class Module1Sector:
             name      = k.dynamicCall("GetCommData(QString,QString,int,QString)",
                                        trcode, rqname, 0, "종목명").strip()
             price     = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                              trcode, rqname, 0, "현재가").strip()))
+                                              trcode, rqname, 0, "현재가").strip() or "0"))
             open_p    = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                              trcode, rqname, 0, "시가").strip()))
+                                              trcode, rqname, 0, "시가").strip() or "0"))
             low_p     = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                              trcode, rqname, 0, "저가").strip()))
+                                              trcode, rqname, 0, "저가").strip() or "0"))
             rate      = float(k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                            trcode, rqname, 0, "등락율").strip())
+                                            trcode, rqname, 0, "등락율").strip() or "0")
             amount    = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                              trcode, rqname, 0, "거래대금").strip())) // 100000000
+                                              trcode, rqname, 0, "거래대금").strip() or "0")) // 100000000
             self.shingoga_detail[code] = {
                 "name":        name,
                 "price":       price,
@@ -287,8 +287,9 @@ class Module1Sector:
                 "is_yangbong": price > open_p,
                 "is_sijeo":    open_p > 0 and open_p == low_p,
             }
-        except:
-            pass
+            print(f"  신고가 상세: {code} {name} {price:,}원 {rate:+.2f}%")
+        except Exception as e:
+            print(f"  신고가 상세 오류: {code} {e}")
         QTimer.singleShot(200, lambda: self._scan_shingoga(self.shingoga_idx + 1))
 
     # ==========================================================
@@ -367,34 +368,35 @@ class Module1Sector:
             msg1 += "\n"
 
         # ── 텔레그램 메시지2: 52주신고가
-        filtered = []
+        all_shingoga = []
         for code, d in self.shingoga_detail.items():
-            if d["is_yangbong"] or d["is_sijeo"]:
-                filtered.append({
-                    "code":     code,
-                    "name":     d["name"],
-                    "price":    d["price"],
-                    "rate":     d["rate"],
-                    "amount":   d["amount"],
-                    "is_sijeo": d["is_sijeo"],
-                    "in_theme": code in top_theme_codes,
-                })
-        filtered = sorted(filtered, key=lambda x: x["amount"], reverse=True)[:15]
+            all_shingoga.append({
+                "code":        code,
+                "name":        d["name"],
+                "price":       d["price"],
+                "rate":        d["rate"],
+                "amount":      d["amount"],
+                "is_yangbong": d["is_yangbong"],
+                "is_sijeo":    d["is_sijeo"],
+                "in_theme":    code in top_theme_codes,
+            })
+        all_shingoga = sorted(all_shingoga, key=lambda x: x["amount"], reverse=True)[:15]
 
         msg2 = f"<b>🔝 52주 신고가</b>  {now}\n"
-        msg2 += "양봉 | 🔥=주도테마 | 거래대금 순\n"
+        msg2 += "🔥=주도테마  ★=양봉  [시=저]=갭유지\n"
         msg2 += "━━━━━━━━━━━━━━━━━━━━\n\n"
-        for s in filtered:
-            fire  = "🔥" if s["in_theme"] else "  "
-            sijeo = " <b>[시=저]</b>" if s["is_sijeo"] else ""
+        for s in all_shingoga:
+            fire     = "🔥" if s["in_theme"] else "  "
+            yangbong = " ★" if s["is_yangbong"] else ""
+            sijeo    = " <b>[시=저]</b>" if s["is_sijeo"] else ""
             themes    = CODE_TO_THEMES.get(s["code"], [])
             theme_tag = f" [{'/'.join(themes[:2])}]" if themes else ""
             msg2 += (f"{fire} {s['name']}"
                      f"  <b>{s['rate']:+.2f}%</b>"
                      f"  {s['price']:,}원"
                      f"  {s['amount']}억"
-                     f"{sijeo}<i>{theme_tag}</i>\n")
-        if not filtered:
+                     f"{yangbong}{sijeo}<i>{theme_tag}</i>\n")
+        if not all_shingoga:
             msg2 += "해당 종목 없음\n"
 
         # ── HTML 파일 갱신

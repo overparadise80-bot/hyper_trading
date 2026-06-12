@@ -89,16 +89,24 @@ _condition_ok  = False
 # ★ 로그인 타임아웃 감시 (60초)
 # - CommConnect() 후 60초 내 on_login이 안 오면 종료
 # =============================================================
+def _safe_quit(msg: str = ""):
+    """CommTerminate → app.quit() — OCX 상태 정리 후 종료"""
+    try:
+        kiwoom.dynamicCall("CommTerminate()")
+    except Exception:
+        pass
+    if msg:
+        print(msg)
+        send_telegram(msg)
+    app.quit()
+
 def _login_timeout():
     if not _login_ok:
-        msg = (
+        _safe_quit(
             "⚠️ 키움 로그인 응답 없음 (60초 타임아웃)\n"
             "영웅문이 이미 실행 중이거나 자동 로그인 팝업 확인 필요\n"
             "→ 재시작 대기 중..."
         )
-        print(msg)
-        send_telegram(msg)
-        app.quit()
 
 login_timeout_timer = QTimer()
 login_timeout_timer.setSingleShot(True)
@@ -114,14 +122,11 @@ condition_timeout_timer.setSingleShot(True)
 
 def _condition_timeout():
     if not _condition_ok:
-        msg = (
+        _safe_quit(
             "⚠️ 조건식 로드 응답 없음 (30초 타임아웃)\n"
             "키움 서버 응답 지연 가능성\n"
             "→ 재시작 대기 중..."
         )
-        print(msg)
-        send_telegram(msg)
-        app.quit()
 
 condition_timeout_timer.timeout.connect(_condition_timeout)
 
@@ -141,11 +146,10 @@ def on_login(err_code: int):
             kiwoom.dynamicCall("GetConditionLoad()"))
     else:
         print(f"로그인 실패: {err_code}")
-        send_telegram(
+        QTimer.singleShot(3000, lambda: _safe_quit(
             f"❌ 키움 로그인 실패 (코드: {err_code})\n"
             f"영웅문 상태 확인 후 재시작 필요"
-        )
-        QTimer.singleShot(3000, lambda: app.quit())   # ★ 정상 종료 유도
+        ))
 
 # =============================================================
 # 조건식 로드 완료
@@ -166,14 +170,11 @@ def on_condition_load():
 
     # 조건식이 하나도 없으면 비정상
     if not condition_list:
-        msg = (
+        QTimer.singleShot(3000, lambda: _safe_quit(
             "⚠️ 조건식 목록이 비어 있음\n"
             "키움 HTS에서 조건식 저장 상태 확인 필요\n"
             "→ 재시작 대기 중..."
-        )
-        print(msg)
-        send_telegram(msg)
-        QTimer.singleShot(3000, lambda: app.quit())
+        ))
         return
 
     # 모듈 초기화
@@ -196,20 +197,17 @@ def on_condition_load():
     # 14:50 일괄청산
     tm.setup_force_exit_timer()
 
-    # 모듈2 실시간 조건검색 등록
-    QTimer.singleShot(1000, register_realtime_conditions)
-
-    # 모듈3 타이머
-    QTimer.singleShot(1500, mod3.setup_timer)
+    # 모듈3 타이머 (테스트: 비활성화)
+    # QTimer.singleShot(1500, mod3.setup_timer)
 
     # 모듈4 시작 (테스트: 비활성화)
     # QTimer.singleShot(2000, mod4.start)
 
-    # 모듈1 초기 실행
-    QTimer.singleShot(10000, lambda: on_interval_m1())
+    # 모듈1 초기 실행 → 완료 후 전일고점돌파 실시간 감시 등록
+    QTimer.singleShot(10000, lambda: mod1.start_scan(on_complete=register_realtime_conditions))
 
     print("전체 모듈 초기화 완료!")
-    send_telegram("<b>하이퍼 트레이딩 시스템 시작!</b>\n모듈1~4 전체 가동")
+    send_telegram("<b>하이퍼 트레이딩 [테스트모드]</b>\n모듈1 스캔 완료 후 모듈2 조건검색 활성 예정")
 
 # =============================================================
 # 모듈1 타이머
@@ -225,25 +223,31 @@ def on_interval_m1():
 # 모듈2 실시간 조건검색 등록
 # =============================================================
 def register_realtime_conditions():
-    screens = {
-        AUTO_TRADE_CONDITION: "0211",
-        GDJUM_CONDITION:      "0210",
-    }
+    # 전일고점돌파만 등록 (황사장 비활성화)
     kiwoom.OnReceiveRealCondition.connect(on_realtime_condition)
     kiwoom.OnReceiveTrCondition.connect(on_initial_condition)
 
-    for cname, screen in screens.items():
-        if cname not in condition_list:
-            print(f"  조건식 없음: {cname}")
-            continue
-        cidx = condition_list[cname]
-        kiwoom.dynamicCall("SendCondition(QString, QString, int, int)",
-                           screen, cname, int(cidx), 1)
-        print(f"  실시간 등록: [{screen}] {cname}")
+    cname = GDJUM_CONDITION
+    if cname not in condition_list:
+        print(f"  조건식 없음: {cname}")
+        return
+    cidx = condition_list[cname]
 
+    # 이전 세션 잔류 등록 해제 (크래시 후 OCX 좀비 상태 방지)
+    try:
+        kiwoom.dynamicCall("SendConditionStop(QString, QString, int)",
+                           "0210", cname, int(cidx))
+    except Exception:
+        pass
+
+    kiwoom.dynamicCall("SendCondition(QString, QString, int, int)",
+                       "0210", cname, int(cidx), 1)
+    print(f"  실시간 등록: [0210] {cname}")
+
+    mod2_gj.start_monitoring()
     send_telegram(
-        "<b>단타 조건검색 실시간 등록 완료</b>\n"
-        f"황사장 | 전일고점돌파\n편입 즉시 알림 시작!"
+        "<b>[전일고점돌파] 실시간 감시 시작</b>\n"
+        "편입 종목 즉시 브리핑 | 10분 무편입 시 알림"
     )
 
 def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
@@ -312,5 +316,9 @@ try:
     kiwoom.dynamicCall("CommConnect()")
     sys.exit(app.exec_())
 except Exception as e:
+    try:
+        kiwoom.dynamicCall("CommTerminate()")
+    except Exception:
+        pass
     send_telegram(f"❌ condition_kiwoom 치명적 오류: {e}")
     sys.exit(1)
