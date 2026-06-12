@@ -222,32 +222,41 @@ def on_interval_m1():
 # =============================================================
 # 모듈2 실시간 조건검색 등록
 # =============================================================
+def _register_condition(screen: str, cname: str, cidx: str):
+    """SendConditionStop → SendCondition 등록 (좀비 방지)"""
+    try:
+        kiwoom.dynamicCall("SendConditionStop(QString, QString, int)",
+                           screen, cname, int(cidx))
+    except Exception:
+        pass
+    kiwoom.dynamicCall("SendCondition(QString, QString, int, int)",
+                       screen, cname, int(cidx), 1)
+    print(f"  실시간 등록: [{screen}] {cname}")
+
 def register_realtime_conditions():
-    # 전일고점돌파만 등록 (황사장 비활성화)
     kiwoom.OnReceiveRealCondition.connect(on_realtime_condition)
     kiwoom.OnReceiveTrCondition.connect(on_initial_condition)
 
-    cname = GDJUM_CONDITION
-    if cname not in condition_list:
-        print(f"  조건식 없음: {cname}")
-        return
-    cidx = condition_list[cname]
+    # 황사장
+    hw = AUTO_TRADE_CONDITION
+    if hw in condition_list:
+        _register_condition("0211", hw, condition_list[hw])
+    else:
+        print(f"  조건식 없음: {hw}")
 
-    # 이전 세션 잔류 등록 해제 (크래시 후 OCX 좀비 상태 방지)
-    try:
-        kiwoom.dynamicCall("SendConditionStop(QString, QString, int)",
-                           "0210", cname, int(cidx))
-    except Exception:
-        pass
+    # 전일고점돌파
+    gj = GDJUM_CONDITION
+    if gj in condition_list:
+        _register_condition("0210", gj, condition_list[gj])
+    else:
+        print(f"  조건식 없음: {gj}")
 
-    kiwoom.dynamicCall("SendCondition(QString, QString, int, int)",
-                       "0210", cname, int(cidx), 1)
-    print(f"  실시간 등록: [0210] {cname}")
-
+    mod2_hw.start_monitoring()
     mod2_gj.start_monitoring()
     send_telegram(
-        "<b>[전일고점돌파] 실시간 감시 시작</b>\n"
-        "편입 종목 즉시 브리핑 | 10분 무편입 시 알림"
+        "<b>[조건검색] 실시간 감시 시작</b>\n"
+        "• 황사장 | 전일고점돌파\n"
+        "편입 즉시 브리핑 | 10분 무편입 시 알림"
     )
 
 def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
