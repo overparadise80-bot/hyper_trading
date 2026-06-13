@@ -12,10 +12,14 @@ from modules.common import TELEGRAM_TOKEN, CHAT_ID
 HTML_PATH = os.path.abspath("monitor.html")
 
 
-def send_screenshot_to_telegram(caption: str = ""):
+def send_screenshot_to_telegram(caption: str = "", ngrok_url: str = None):
     """
     monitor.html을 playwright로 스크린샷 → 텔레그램 전송
+    ngrok_url이 있으면 캡션 아래에 링크 추가
     """
+    if ngrok_url:
+        monitor_url = f"{ngrok_url}/monitor.html"
+        caption = f"{caption}\n\n<a href='{monitor_url}'>📊 모바일 실시간 보기</a>\n{monitor_url}"
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -31,17 +35,14 @@ def send_screenshot_to_telegram(caption: str = ""):
             # HTML 파일 로드
             page.goto(f"file:///{HTML_PATH.replace(os.sep, '/')}")
 
-            # 페이지 완전 렌더링 대기
+            # 세로 스크롤 뷰 (480px 폭 = 넉넉한 세로 포트레이트)
+            page.set_viewport_size({"width": 480, "height": 900})
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(800)
 
-            # 전체 페이지 높이에 맞게 viewport 조정
+            # 전체 페이지 높이에 맞게 viewport 재조정
             page_height = page.evaluate("document.body.scrollHeight")
-            page_width  = page.evaluate("document.body.scrollWidth")
-            page.set_viewport_size({
-                "width":  max(page_width, 900),
-                "height": page_height
-            })
+            page.set_viewport_size({"width": 480, "height": page_height})
 
             # 스크린샷 저장 (임시 파일)
             tmp = tempfile.NamedTemporaryFile(

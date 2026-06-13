@@ -103,10 +103,14 @@ class Module1Sector:
                 name   = k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "종목명").strip()
                 rate   = float(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "등락율").strip())
                 price  = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "현재가").strip()))
+                open_p = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "시가").strip() or "0"))
+                high_p = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "고가").strip() or "0"))
+                low_p  = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "저가").strip() or "0"))
                 volume = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "거래량").strip() or "0"))
                 amount = (volume * price) // 100_000_000  # 거래량×현재가 → 억원
                 self.stock_data[code] = {
                     "name": name, "rate": rate, "price": price,
+                    "open": open_p, "high": high_p, "low": low_p,
                     "amount": amount, "prog": 0,
                 }
             except:
@@ -406,23 +410,10 @@ class Module1Sector:
         send_telegram(msg1)
         QTimer.singleShot(2000, lambda: send_telegram(msg2))
 
-        # ── ★ ngrok URL 15분마다 텔레그램 전송
+        # ── 스크린샷 + ngrok URL 함께 텔레그램 전송
         ngrok_url = self._get_ngrok_url()
-        if ngrok_url:
-            url_msg = (
-                f"📊 <b>주도섹터 모니터 URL</b>\n"
-                f"{ngrok_url}\n\n"
-                f"갤럭시탭에서 위 링크를 열어두세요!\n"
-                f"(15분마다 자동 새로고침)"
-            )
-            QTimer.singleShot(3000, lambda: send_telegram(url_msg))
-            print(f"  ngrok URL 전송: {ngrok_url}")
-        else:
-            print("  ngrok URL 없음 - URL 전송 스킵")
-
-        # ── 스크린샷 → 텔레그램 전송
         caption = f"<b>주도섹터 모니터</b>  {now}"
-        QTimer.singleShot(4000, lambda: send_screenshot_to_telegram(caption))
+        QTimer.singleShot(3000, lambda: send_screenshot_to_telegram(caption, ngrok_url=ngrok_url))
 
         print(f"  모듈1 완료! [{now}]")
         if self._on_complete:
@@ -440,12 +431,19 @@ class Module1Sector:
             for s in t["stocks"][:THEME_STOCK_TOP]:
                 if s["price"] == 0:
                     continue
+                    # 전일종가 역산 → 시가율/고가율/저가율 계산
+                prev = s["price"] / (1 + s["rate"] / 100) if s["rate"] != -100 else s["price"]
+                def to_rate(p):
+                    return round((p - prev) / prev * 100, 2) if prev > 0 and p > 0 else 0
                 stocks_js.append({
-                    "name":  s["name"],
-                    "price": s["price"],
-                    "rate":  round(s["rate"], 2),
-                    "amt":   s["amount"],
-                    "prog":  s.get("prog", 0),
+                    "name":       s["name"],
+                    "price":      s["price"],
+                    "rate":       round(s["rate"], 2),
+                    "open_rate":  to_rate(s.get("open", 0)),
+                    "high_rate":  to_rate(s.get("high", 0)),
+                    "low_rate":   to_rate(s.get("low", 0)),
+                    "amt":        s["amount"],
+                    "prog":       s.get("prog", 0),
                 })
             sectors_js.append({
                 "name":     t["theme"],
@@ -461,57 +459,59 @@ class Module1Sector:
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta http-equiv="refresh" content="900">
 <title>주도섹터 모니터</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0;}}
-body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:8px;}}
-.topbar{{background:#0c447c;border-radius:8px;padding:7px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}}
-.topbar-title{{color:#e6f1fb;font-size:14px;font-weight:500;}}
-.topbar-right{{display:flex;align-items:center;gap:12px;}}
-.live-dot{{width:7px;height:7px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:4px;}}
-.live-label{{color:#4ade80;font-size:11px;font-weight:500;}}
+body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:6px;}}
+.topbar{{background:#0c447c;border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}}
+.topbar-title{{color:#e6f1fb;font-size:14px;font-weight:600;white-space:nowrap;}}
+.topbar-right{{display:flex;align-items:center;gap:10px;}}
+.live-dot{{width:7px;height:7px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:3px;}}
+.live-label{{color:#4ade80;font-size:11px;font-weight:600;}}
 .t-time{{color:#b5d4f4;font-size:12px;}}
-.t-next{{color:#85b7eb;font-size:11px;}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:7px;}}
+.t-next{{color:#85b7eb;font-size:10px;}}
+.grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;}}
+@media(min-width:900px){{.grid{{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));}}}}
 .card{{background:#f0f7ff;border:1px solid #b5d4f4;border-radius:8px;overflow:hidden;}}
-.card-head{{background:#185fa5;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;}}
-.rank-badge{{background:#0c447c;color:#b5d4f4;font-size:10px;font-weight:500;padding:1px 6px;border-radius:4px;margin-right:6px;}}
-.sector-name{{color:#e6f1fb;font-size:13px;font-weight:500;}}
-.sector-rate{{font-size:13px;font-weight:700;padding:2px 8px;border-radius:4px;background:#dceefb;min-width:52px;text-align:center;}}
-.card-body{{padding:4px 8px;}}
-.stock-row{{padding:5px 0;border-bottom:0.5px solid #c8e0f7;}}
+.card-head{{background:#185fa5;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;}}
+.rank-badge{{background:#0c447c;color:#b5d4f4;font-size:12px;font-weight:500;padding:2px 9px;border-radius:4px;margin-right:7px;}}
+.sector-name{{color:#e6f1fb;font-size:16px;font-weight:700;}}
+.sector-rate{{font-size:16px;font-weight:700;padding:3px 11px;border-radius:4px;background:#dceefb;min-width:66px;text-align:center;}}
+.up-bar{{display:none;}}
+.card-body{{padding:4px 10px;}}
+.stock-row{{padding:7px 0;border-bottom:0.5px solid #c8e0f7;}}
 .stock-row:last-child{{border-bottom:none;}}
-.stock-info{{display:flex;justify-content:space-between;align-items:baseline;}}
-.sname{{font-size:12px;color:#111;font-weight:700;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
-.sright{{display:flex;gap:6px;align-items:baseline;}}
-.sprice{{font-size:11px;color:#0c447c;}}
-.srate{{font-size:12px;font-weight:500;}}
-.samt{{font-size:10px;color:#378add;}}
+.stock-info{{display:flex;justify-content:space-between;align-items:center;}}
+.sname{{font-size:13px;color:#111;font-weight:700;max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.sright{{display:flex;gap:5px;align-items:baseline;}}
+.sprice{{font-size:12px;color:#0c447c;margin-bottom:1px;}}
+.srate{{font-size:13px;font-weight:700;}}
+.samt{{font-size:11px;color:#378add;}}
 .candle-wrap{{position:relative;height:8px;background:#dceefb;border-radius:2px;margin:3px 0 2px;overflow:hidden;}}
 .candle-fill{{position:absolute;top:1px;height:6px;border-radius:1px;}}
 .candle-center{{position:absolute;left:50%;top:0;width:2px;height:8px;background:#111;transform:translateX(-50%);}}
 .prog-row{{font-size:10px;height:13px;}}
-.footer{{margin-top:7px;background:#0c447c;border-radius:8px;padding:5px 14px;display:flex;justify-content:space-between;align-items:center;}}
+.footer{{margin-top:6px;background:#0c447c;border-radius:8px;padding:6px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;}}
 .footer-txt{{color:#85b7eb;font-size:10px;}}
 .footer-hi{{color:#b5d4f4;font-weight:500;}}
 </style>
 </head>
 <body>
 <div class="topbar">
-  <div class="topbar-title">주도섹터 · 주도주 모니터</div>
+  <div class="topbar-title">주도섹터 · 주도주</div>
   <div class="topbar-right">
     <span><span class="live-dot"></span><span class="live-label">LIVE</span></span>
     <span class="t-time" id="cur-time">--:--:--</span>
-    <span class="t-next" id="nxt">다음 스캔: --분 후</span>
+    <span class="t-next" id="nxt">다음: --분</span>
   </div>
 </div>
 <div class="grid" id="grid"></div>
 <div class="footer">
   <span class="footer-txt">스캔: <span class="footer-hi">{scan_time}</span></span>
-  <span class="footer-txt">단순 평균 등락률 · 테마 TOP7</span>
-  <span class="footer-txt">프로그램: opt10059 당일 누적 주수</span>
+  <span class="footer-txt">단순 평균 · 테마 TOP7</span>
+  <span class="footer-txt">PR = 프로그램 주수</span>
 </div>
 
 <script>
@@ -528,13 +528,17 @@ function fa(a){{
 }}
 function fpr(p){{ return p.toLocaleString()+'원'; }}
 
-function candleBar(rate){{
-  const clipped = Math.max(-MAX_RATE, Math.min(MAX_RATE, rate));
-  const halfPct = Math.abs(clipped) / MAX_RATE * 50;
-  const color   = clipped >= 0 ? '#f5222d' : '#1677ff';
-  const left    = clipped >= 0 ? 50 : (50 - halfPct);
+function toX(r){{ return Math.max(0, Math.min(100, 50 + r / MAX_RATE * 50)); }}
+function candleBar(st){{
+  const c = st.rate >= st.open_rate ? '#f5222d' : '#1677ff';
+  const x1 = toX(Math.min(st.open_rate, st.rate));
+  const x2 = toX(Math.max(st.open_rate, st.rate));
+  const xL = toX(st.low_rate);
+  const xH = toX(st.high_rate);
+  const bodyW = Math.max(x2 - x1, 0.5);
   return `<div class="candle-wrap">
-    <div class="candle-fill" style="left:${{left}}%;width:${{halfPct}}%;background:${{color}}"></div>
+    <div style="position:absolute;top:3px;left:${{xL}}%;width:${{xH-xL}}%;height:2px;background:${{c}};opacity:0.5"></div>
+    <div style="position:absolute;top:1px;left:${{x1}}%;width:${{bodyW}}%;height:6px;background:${{c}};border-radius:1px"></div>
     <div class="candle-center"></div>
   </div>`;
 }}
@@ -548,17 +552,18 @@ function progLabel(prog){{
 
 function render(){{
   document.getElementById('grid').innerHTML = SECTORS.map((sec,si)=>{{
+    const upPct = Math.round(sec.up_ratio * 100);
     const rows = [...sec.stocks].sort((a,b)=>b.rate-a.rate).map((st)=>{{
       return `<div class="stock-row">
         <div class="stock-info">
           <span class="sname">${{st.name}}</span>
           <div class="sright">
-            <span class="sprice">${{fpr(st.price)}}</span>
             <span class="srate" style="color:${{rc(st.rate)}}">${{fr(st.rate)}}</span>
             <span class="samt">${{fa(st.amt)}}</span>
           </div>
         </div>
-        ${{candleBar(st.rate)}}
+        <span class="sprice">${{fpr(st.price)}}</span>
+        ${{candleBar(st)}}
         ${{progLabel(st.prog)}}
       </div>`;
     }}).join('');
@@ -566,6 +571,10 @@ function render(){{
       <div class="card-head">
         <div><span class="rank-badge">${{medals[si]||si+1+'위'}}</span><span class="sector-name">${{sec.name}}</span></div>
         <span class="sector-rate" style="color:${{rc(sec.rate)}}">${{fr(sec.rate)}}</span>
+      </div>
+      <div class="up-bar">
+        <span>상승종목 ${{upPct}}%</span>
+        <span>거래대금 ${{fa(sec.amt)}}</span>
       </div>
       <div class="card-body">${{rows}}</div>
     </div>`;
@@ -575,7 +584,15 @@ render();
 setInterval(render, 5000);
 
 function tick(){{
-  document.getElementById('cur-time').textContent = new Date().toLocaleTimeString('ko-KR',{{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}});
+  const now = new Date();
+  document.getElementById('cur-time').textContent =
+    now.toLocaleTimeString('ko-KR',{{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}});
+  const min = now.getMinutes() % 15;
+  const sec = now.getSeconds();
+  const remain = (14 - min) * 60 + (60 - sec);
+  const rm = Math.floor(remain / 60);
+  const rs = remain % 60;
+  document.getElementById('nxt').textContent = `다음: ${{rm}}분${{rs}}초`;
 }}
 tick();
 setInterval(tick, 1000);
