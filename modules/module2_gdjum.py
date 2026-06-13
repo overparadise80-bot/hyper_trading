@@ -13,8 +13,9 @@ from modules.common import send_telegram
 NO_ENTRY_MINUTES = 10   # 무편입 알림 기준 (분)
 
 class Module2Gdjum:
-    def __init__(self, kiwoom):
+    def __init__(self, kiwoom, queue):
         self.kiwoom      = kiwoom
+        self._queue      = queue
         self.status      = {}   # code → {"name": str, "time": str}
         self._tr_handler = None
         self._pending    = []   # TR 대기 큐
@@ -67,9 +68,11 @@ class Module2Gdjum:
     # =========================================================
     def _fetch_name(self, code: str):
         self._tr_handler = self._on_tr_name
-        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
-                                "전일고점종목명", "opt10001", 0, "0601")
+        def _do(c=code):
+            self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
+                                    "전일고점종목명", "opt10001", 0, "0601")
+        self._queue.push(_do)
 
     def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
         if self._tr_handler:
@@ -80,10 +83,12 @@ class Module2Gdjum:
             return
         self._tr_handler = None
         if not self._pending:
+            self._queue.done()
             return
 
         code = self._pending.pop(0)
         if code not in self.status:
+            self._queue.done()
             self._next_pending()
             return
 
@@ -100,11 +105,12 @@ class Module2Gdjum:
             f"  ({now_str})"
         )
         print(f"  [전일고점] 편입 브리핑: {name} ({now_str})")
+        self._queue.done()
         self._next_pending()
 
     def _next_pending(self):
         if self._pending:
-            QTimer.singleShot(300, lambda: self._fetch_name(self._pending[0]))
+            self._fetch_name(self._pending[0])
 
     # =========================================================
     # 모니터링 전용 — 호가/가격 무시

@@ -13,8 +13,9 @@ from modules.common import send_telegram, AUTO_TRADE_CONDITION
 NO_ENTRY_MINUTES = 10
 
 class Module2Hwasa:
-    def __init__(self, kiwoom):
+    def __init__(self, kiwoom, queue):
         self.kiwoom      = kiwoom
+        self._queue      = queue
         self.status      = {}   # code → {"name": str, "time": str}
         self._tr_handler = None
         self._pending    = []
@@ -65,9 +66,11 @@ class Module2Hwasa:
     # =========================================================
     def _fetch_detail(self, code: str):
         self._tr_handler = self._on_tr_detail
-        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
-                                "황사장편입상세", "opt10001", 0, "0501")
+        def _do(c=code):
+            self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
+                                    "황사장편입상세", "opt10001", 0, "0501")
+        self._queue.push(_do)
 
     def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
         if self._tr_handler:
@@ -78,10 +81,12 @@ class Module2Hwasa:
             return
         self._tr_handler = None
         if not self._pending:
+            self._queue.done()
             return
 
         code = self._pending.pop(0)
         if code not in self.status:
+            self._queue.done()
             self._next_pending()
             return
 
@@ -115,8 +120,9 @@ class Module2Hwasa:
             f"  {price:,}원  <b>{rate:+.2f}%</b>"
         )
         print(f"  [황사장] 편입 브리핑: {name} ({now_str})")
+        self._queue.done()
         self._next_pending()
 
     def _next_pending(self):
         if self._pending:
-            QTimer.singleShot(300, lambda: self._fetch_detail(self._pending[0]))
+            self._fetch_detail(self._pending[0])

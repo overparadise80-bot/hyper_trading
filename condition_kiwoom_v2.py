@@ -46,6 +46,7 @@ _setup_logging()
 
 # 모듈 import
 from modules import trade_manager as tm
+from modules.tr_queue        import KiwoomQueue
 from modules.module1_sector  import Module1Sector
 from modules.module2_hwasa   import Module2Hwasa
 from modules.module2_gdjum   import Module2Gdjum
@@ -177,10 +178,13 @@ def on_condition_load():
         ))
         return
 
+    # 글로벌 TR 큐 생성 (모듈1/2 OCX 호출 직렬화)
+    queue   = KiwoomQueue()
+
     # 모듈 초기화
-    mod1    = Module1Sector(kiwoom)
-    mod2_hw = Module2Hwasa(kiwoom)
-    mod2_gj = Module2Gdjum(kiwoom)
+    mod1    = Module1Sector(kiwoom, queue)
+    mod2_hw = Module2Hwasa(kiwoom, queue)
+    mod2_gj = Module2Gdjum(kiwoom, queue)
     mod3    = Module3Closing(kiwoom, condition_list)
     mod4    = Module4Chalna(kiwoom)
 

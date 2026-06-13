@@ -32,8 +32,9 @@ HTML_OUTPUT      = "monitor.html"
 
 class Module1Sector:
 
-    def __init__(self, kiwoom):
+    def __init__(self, kiwoom, queue):
         self.kiwoom = kiwoom
+        self._queue = queue
         self._condition_list = {}
         self._tr_handler   = None
         self._cond_handler = None
@@ -87,10 +88,10 @@ class Module1Sector:
             return
         batch = self._batches[idx]
         print(f"  배치 스캔: {idx * 100}/{len(ALL_CODES)} ({idx + 1}/{len(self._batches)}배치)")
-        self.kiwoom.dynamicCall(
+        self._queue.push(lambda b=batch: self.kiwoom.dynamicCall(
             "CommKwRqData(QString, bool, int, int, QString, QString)",
-            ";".join(batch), False, len(batch), 0, "복수종목조회", "0301"
-        )
+            ";".join(b), False, len(b), 0, "복수종목조회", "0301"
+        ))
 
     def _on_kw_data(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "복수종목조회":
@@ -115,7 +116,9 @@ class Module1Sector:
                 }
             except:
                 pass
-        QTimer.singleShot(300, lambda: self._scan_batch(self.scan_idx + 1))
+        next_idx = self.scan_idx + 1
+        self._queue.done()
+        self._scan_batch(next_idx)
 
     # ==========================================================
     # PHASE2 완료 → 테마 집계 → 프로그램 매매 조회
@@ -222,7 +225,7 @@ class Module1Sector:
         except:
             pass
         self.kiwoom.OnReceiveTrCondition.connect(self._on_shingoga_condition)
-        QTimer.singleShot(300, self._run_shingoga)
+        self._run_shingoga()
 
     # ==========================================================
     # PHASE5: 52주신고가
@@ -233,9 +236,9 @@ class Module1Sector:
             self._phase5_done([])
             return
         idx = self._condition_list["52주신고가"]
-        self.kiwoom.dynamicCall(
+        self._queue.push(lambda: self.kiwoom.dynamicCall(
             "SendCondition(QString, QString, int, int)",
-            "0201", "52주신고가", int(idx), 0)
+            "0201", "52주신고가", int(idx), 0))
 
     def _on_shingoga_condition(self, screen, code_list, condition_name, idx, prev_next):
         if condition_name != "52주신고가":
@@ -246,12 +249,13 @@ class Module1Sector:
             self.kiwoom.OnReceiveTrCondition.disconnect(self._on_shingoga_condition)
         except:
             pass
+        self._queue.done()
         self._phase5_done(codes)
 
     def _phase5_done(self, codes):
         self.shingoga_codes = codes
         self._tr_handler = self._on_tr_shingoga
-        QTimer.singleShot(300, lambda: self._scan_shingoga(0))
+        self._scan_shingoga(0)
 
     def _scan_shingoga(self, idx):
         self.shingoga_idx = idx
@@ -259,11 +263,11 @@ class Module1Sector:
             self._phase6_done()
             return
         code = self.shingoga_codes[idx]
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "CommRqData(QString, QString, int, QString)",
-            "신고가상세요청", "opt10001", 0, "0105")
+        def _do(c=code):
+            self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
+                                    "신고가상세요청", "opt10001", 0, "0105")
+        self._queue.push(_do)
 
     def _on_tr_shingoga(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "신고가상세요청":
@@ -294,7 +298,9 @@ class Module1Sector:
             print(f"  신고가 상세: {code} {name} {price:,}원 {rate:+.2f}%")
         except Exception as e:
             print(f"  신고가 상세 오류: {code} {e}")
-        QTimer.singleShot(200, lambda: self._scan_shingoga(self.shingoga_idx + 1))
+        next_idx = self.shingoga_idx + 1
+        self._queue.done()
+        self._scan_shingoga(next_idx)
 
     # ==========================================================
     # PHASE6: 브리핑 생성
