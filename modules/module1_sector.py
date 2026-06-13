@@ -371,36 +371,42 @@ class Module1Sector:
                          f"{s['amount']}억{prog_str}\n")
             msg1 += "\n"
 
-        # ── 텔레그램 메시지2: 52주신고가
-        all_shingoga = []
+        # ── 텔레그램 메시지2: 52주신고가 (섹터별 그룹)
+        top_theme_names = {t["theme"] for t in self.theme_ranking[:THEME_TOP_N]}
+
+        # 섹터별로 종목 그룹핑 (1종목이 여러 섹터에 속할 수 있음)
+        from collections import defaultdict
+        theme_groups = defaultdict(list)
         for code, d in self.shingoga_detail.items():
-            all_shingoga.append({
-                "code":        code,
-                "name":        d["name"],
-                "price":       d["price"],
-                "rate":        d["rate"],
-                "amount":      d["amount"],
-                "is_yangbong": d["is_yangbong"],
-                "is_sijeo":    d["is_sijeo"],
-                "in_theme":    code in top_theme_codes,
-            })
-        all_shingoga = sorted(all_shingoga, key=lambda x: x["amount"], reverse=True)[:15]
+            themes = CODE_TO_THEMES.get(code, [])
+            if themes:
+                for th in themes:
+                    theme_groups[th].append({
+                        "name": d["name"],
+                        "rate": d["rate"],
+                    })
+            else:
+                theme_groups["기타"].append({
+                    "name": d["name"],
+                    "rate": d["rate"],
+                })
+
+        # 주도섹터 먼저, 이후 종목수 많은 순
+        sorted_themes = sorted(
+            theme_groups.keys(),
+            key=lambda t: (0 if t in top_theme_names else 1, -len(theme_groups[t]))
+        )
 
         msg2 = f"<b>🔝 52주 신고가</b>  {now}\n"
-        msg2 += "🔥=주도테마  ★=양봉  [시=저]=갭유지\n"
         msg2 += "━━━━━━━━━━━━━━━━━━━━\n\n"
-        for s in all_shingoga:
-            fire     = "🔥" if s["in_theme"] else "  "
-            yangbong = " ★" if s["is_yangbong"] else ""
-            sijeo    = " <b>[시=저]</b>" if s["is_sijeo"] else ""
-            themes    = CODE_TO_THEMES.get(s["code"], [])
-            theme_tag = f" [{'/'.join(themes[:2])}]" if themes else ""
-            msg2 += (f"{fire} {s['name']}"
-                     f"  <b>{s['rate']:+.2f}%</b>"
-                     f"  {s['price']:,}원"
-                     f"  {s['amount']}억"
-                     f"{yangbong}{sijeo}<i>{theme_tag}</i>\n")
-        if not all_shingoga:
+        for th in sorted_themes:
+            stocks = sorted(theme_groups[th], key=lambda x: x["rate"], reverse=True)
+            fire   = "🔥 " if th in top_theme_names else ""
+            msg2  += f"<b>{fire}{th}</b> (종목수: {len(stocks)})\n"
+            for s in stocks:
+                msg2 += f"  [{s['rate']:+.1f}%] {s['name']}\n"
+            msg2 += "\n"
+        if not theme_groups:
             msg2 += "해당 종목 없음\n"
 
         # ── HTML 파일 갱신
