@@ -38,9 +38,13 @@ class Module1Sector:
         self._condition_list = {}
         self._tr_handler   = None
         self._cond_handler = None
+        self.mod5 = None   # Module5Sonsugun 참조 (set_sonsugun으로 주입)
         self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
         self.kiwoom.OnReceiveTrCondition.connect(self._on_cond_dispatch)
         self.reset()
+
+    def set_sonsugun(self, mod5):
+        self.mod5 = mod5
 
     def set_condition_list(self, condition_list: dict):
         self._condition_list = condition_list
@@ -109,10 +113,12 @@ class Module1Sector:
                 low_p  = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "저가").strip() or "0"))
                 volume = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)", trcode, rqname, i, "거래량").strip() or "0"))
                 amount = (volume * price) // 100_000_000  # 거래량×현재가 → 억원
+                prev_close = int(price / (1 + rate / 100)) if rate != -100 and price > 0 else price
                 self.stock_data[code] = {
                     "name": name, "rate": rate, "price": price,
                     "open": open_p, "high": high_p, "low": low_p,
                     "amount": amount, "prog": 0,
+                    "prev_close": prev_close,
                 }
             except:
                 pass
@@ -353,6 +359,9 @@ class Module1Sector:
             for s in t["stocks"]:
                 top_theme_codes.add(s["code"])
 
+        # 모듈5 교집합 코드 (없으면 빈 set)
+        milk_codes = self.mod5.get_milk_codes() if self.mod5 else set()
+
         # ── 텔레그램 메시지1: 주도섹터
         medals = ["🥇","🥈","🥉","4위","5위","6위","7위"]
         msg1 = f"<b>📊 테마 주도섹터 TOP{THEME_TOP_N}</b>  {now}\n"
@@ -371,7 +380,8 @@ class Module1Sector:
                 if s["price"] == 0:
                     continue
                 prog_str = f"  프로그램 {s['prog']:+d}억" if s["prog"] != 0 else ""
-                msg1 += (f"   • {s['name']}  "
+                milk_str = "🍼" if s["code"] in milk_codes else ""
+                msg1 += (f"   • {milk_str}{s['name']}  "
                          f"<b>{s['rate']:+.2f}%</b>  "
                          f"{s['price']:,}원  "
                          f"{s['amount']}억{prog_str}\n")
@@ -436,6 +446,7 @@ class Module1Sector:
     # ==========================================================
     def _update_html(self, scan_time: str):
         top7 = self.theme_ranking[:THEME_TOP_N]
+        milk_codes = self.mod5.get_milk_codes() if self.mod5 else set()
 
         sectors_js = []
         for t in top7:
@@ -448,14 +459,17 @@ class Module1Sector:
                 def to_rate(p):
                     return round((p - prev) / prev * 100, 2) if prev > 0 and p > 0 else 0
                 stocks_js.append({
+                    "code":       s["code"],
                     "name":       s["name"],
                     "price":      s["price"],
+                    "prev_close": s.get("prev_close", s["price"]),
                     "rate":       round(s["rate"], 2),
                     "open_rate":  to_rate(s.get("open", 0)),
                     "high_rate":  to_rate(s.get("high", 0)),
                     "low_rate":   to_rate(s.get("low", 0)),
                     "amt":        s["amount"],
                     "prog":       s.get("prog", 0),
+                    "milk":       s["code"] in milk_codes,
                 })
             sectors_js.append({
                 "name":     t["theme"],
@@ -531,6 +545,18 @@ const SECTORS = {data_json};
 const medals = ['🥇','🥈','🥉','4위','5위','6위','7위'];
 const MAX_RATE = 30;
 
+// 실시간 가격 캐시 {{코드: {{price, rate}}}}
+let livePrice = {{}};
+
+function fetchLivePrices() {{
+  fetch('/prices.json?t=' + Date.now())
+    .then(r => r.json())
+    .then(d => {{ livePrice = d.prices || {{}}; render(); }})
+    .catch(() => {{}});
+}}
+setInterval(fetchLivePrices, 15000);
+fetchLivePrices();
+
 function rc(r){{ return r>0?'#f5222d':r<0?'#1677ff':'#8c8c8c'; }}
 function fr(r){{ return (r>0?'+':'')+r.toFixed(2)+'%'; }}
 function fa(a){{
@@ -566,16 +592,21 @@ function render(){{
   document.getElementById('grid').innerHTML = SECTORS.map((sec,si)=>{{
     const upPct = Math.round(sec.up_ratio * 100);
     const rows = [...sec.stocks].sort((a,b)=>b.rate-a.rate).map((st)=>{{
+      const live  = livePrice[st.code];
+      const price = live ? live.price : st.price;
+      const rate  = live ? live.rate  : st.rate;
+      const dst   = Object.assign({{}}, st, {{price, rate}});
+      const milkTag = st.milk ? '<span style="font-size:12px;margin-right:2px">🍼</span>' : '';
       return `<div class="stock-row">
         <div class="stock-info">
-          <span class="sname">${{st.name}}</span>
+          <span class="sname">${{milkTag}}${{st.name}}</span>
           <div class="sright">
-            <span class="srate" style="color:${{rc(st.rate)}}">${{fr(st.rate)}}</span>
+            <span class="srate" style="color:${{rc(rate)}}">${{fr(rate)}}</span>
             <span class="samt">${{fa(st.amt)}}</span>
           </div>
         </div>
-        <span class="sprice">${{fpr(st.price)}}</span>
-        ${{candleBar(st)}}
+        <span class="sprice">${{fpr(price)}}</span>
+        ${{candleBar(dst)}}
         ${{progLabel(st.prog)}}
       </div>`;
     }}).join('');
