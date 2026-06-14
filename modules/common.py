@@ -78,7 +78,7 @@ PRICE_B1          = 50000
 PRICE_B2          = 100000
 SELL_BUY_RATIO    = 2.0
 CHEGYUL_MIN       = 100.0
-WALL_BREAK_RATE   = -0.10
+WALL_BREAK_RATE   = 0.10   # 매도벽 붕괴 기준: (직전매도잔량-현재매도잔량) / 매수잔량 >= 이 값
 ALERT_COOLDOWN    = 300
 
 # =============================================================

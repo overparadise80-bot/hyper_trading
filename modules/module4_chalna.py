@@ -154,8 +154,11 @@ class Module4Chalna:
         if chegyul <= CHEGYUL_MIN:                 return
         if bulk < self._get_bulk_threshold(price): return
 
-        wall_change = (ask_qty - ask_prev) / ask_prev
-        if wall_change > WALL_BREAK_RATE:
+        # 해석 A: 사라진 매도잔량(ask_prev - ask_qty)이 매수호가 잔량(bid_qty)의
+        # WALL_BREAK_RATE 이상이어야 매도벽 붕괴로 인정
+        wall_decrease = ask_prev - ask_qty
+        wall_change   = wall_decrease / bid_qty  # 알림/로그용 비율(매수잔량 대비)
+        if wall_decrease <= 0 or wall_change < WALL_BREAK_RATE:
             return
 
         self._fire_alert(code, price, ask_qty, bid_qty,
