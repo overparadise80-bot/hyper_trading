@@ -1,57 +1,432 @@
 # -*- coding: utf-8 -*-
 """
-module2_gdjum.py - 단타검색식전일고점돌파 실시간 감시 (모니터링 전용)
-- 편입 시 종목명 텔레그램 브리핑
-- 10분간 편입 없으면 "리스트에 안 떴다" 브리핑
-- 실매매 없음
+module2_gdjum.py - 단타검색식전일고점돌파 자동매매 (B안: CommRqData 폴링)
+- SetRealReg 없음 — 호가 감시를 opt10004 CommRqData 5초 폴링으로 대체
+- 모의투자 계좌(ACCOUNT_NUM)로 지정가 매수 실행
+- 편입 → 기본정보조회(opt10001) → 호가폴링(opt10004) + 거래량조회(opt10080) → 진입
 """
 
+from collections import deque
+from datetime import datetime
 from PyQt5.QtCore import QTimer
-from modules.common import send_telegram
+from modules.common import (
+    send_telegram, GDJUM_CONDITION, GDJUM_TICK_DOWN, GDJUM_RISE_SKIP,
+    GDJUM_VOL_MULT, GDJUM_CANDLE_N, MAX_POSITIONS, is_m2_open,
+    get_tick_size, calc_qty
+)
+from modules import trade_manager as tm
 
-NO_ENTRY_MINUTES = 10   # 무편입 알림 기준 (분)
+GDJUM_TICK_MIN   = 5e7     # 호가잔량 최소 5천만원
+MAX_WAIT_MIN     = 120      # 편입 후 최대 대기 (분)
+HOGA_POLL_MS     = 5_000    # 호가 폴링 주기
+NO_ENTRY_MINUTES = 10       # 무편입 알림 기준 (분)
+HOGA_SCREEN_BASE = 620      # 호가 폴링 전용 스크린번호 범위 시작
+
 
 class Module2Gdjum:
-    def __init__(self, kiwoom, queue):
-        self.kiwoom  = kiwoom
-        self.status  = {}   # code → {"name": str, "time": str}
-        self.history = []   # {"time": str, "name": str, "action": "편입"|"이탈"}
 
+    def __init__(self, kiwoom, queue):
+        self.kiwoom = kiwoom
+        self.queue  = queue
+
+        self.status  = {}   # code → status dict
+        self.history = []   # {"time", "name", "action"}
+
+        # TR 응답 역매핑: KiwoomQueue가 직렬화하므로 deque FIFO가 정확
+        self._basic_q = deque()   # (code,) 순서대로 opt10001 요청됨
+        self._vol_q   = deque()   # (code,) 순서대로 opt10080 요청됨
+
+        # opt10004 응답 역매핑: screen → code
+        self._hoga_screen_map     = {}
+        self._hoga_screen_counter = HOGA_SCREEN_BASE
+
+        # 무편입 알림 타이머
         self._no_entry_timer = QTimer()
         self._no_entry_timer.setSingleShot(True)
         self._no_entry_timer.timeout.connect(self._on_no_entry_timeout)
 
+        # 호가 폴링 타이머
+        self._hoga_poll_timer = QTimer()
+        self._hoga_poll_timer.timeout.connect(self._enqueue_hoga_polls)
+
+        kiwoom.OnReceiveTrData.connect(self._on_tr)
+
     # =========================================================
-    # 외부 진입점
+    # 외부 진입점 (condition_kiwoom_v2 → 호출)
     # =========================================================
     def start_monitoring(self):
-        self._reset_timer()
-        print(f"  [전일고점] {NO_ENTRY_MINUTES}분 감시 타이머 시작")
+        self._reset_no_entry_timer()
+        self._hoga_poll_timer.start(HOGA_POLL_MS)
+        print(f"  [전일고점] 모니터링 시작 (호가 {HOGA_POLL_MS//1000}초 폴링)")
 
     def stop_monitoring(self):
         self._no_entry_timer.stop()
-        print(f"  [전일고점] 무편입 알림 타이머 종료")
+        self._hoga_poll_timer.stop()
+        print("  [전일고점] 모니터링 종료")
 
     def on_enter(self, code: str, now_str: str):
         if code in self.status:
             return
-        name = self.kiwoom.dynamicCall("GetMasterCodeName(QString)", code).strip() or code
-        self.status[code] = {"name": name, "time": now_str}
+        if code in tm.positions or len(tm.positions) >= MAX_POSITIONS:
+            return
+
+        name        = self.kiwoom.dynamicCall(
+            "GetMasterCodeName(QString)", code).strip() or code
+        hoga_screen = self._alloc_hoga_screen()
+
+        self.status[code] = {
+            "name":        name,
+            "prev_high":   0,
+            "tick_size":   0,
+            "entry_price": 0,
+            "max_price":   0,
+            "hoga_ok":     False,
+            "vol_ok":      False,
+            "order_sent":  False,
+            "enter_time":  datetime.now(),
+            "hoga_screen": hoga_screen,
+        }
         self.history.append({"time": now_str, "name": name, "action": "편입"})
-        self._reset_timer()
+        self._reset_no_entry_timer()
+
         send_telegram(
-            f"📌 <b>[전일고점돌파] 편입!</b>\n"
-            f"• {name}\n"
-            f"  ({now_str})"
+            f"📌 <b>[전일고점돌파] 편입 감지!</b> ({now_str})\n"
+            f"• <b>{name}</b>\n"
+            f"  ⏳ 기본정보 조회 중..."
         )
-        print(f"  [전일고점] 편입 브리핑: {name} ({now_str})")
+        print(f"  [전일고점] 편입: {name} ({code})")
+
+        # KiwoomQueue 직렬화 → deque FIFO로 응답 코드 추적
+        self._basic_q.append(code)
+        def _req():
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString,QString)", "종목코드", code)
+            self.kiwoom.dynamicCall(
+                "CommRqData(QString,QString,int,QString)",
+                "gdjum_basic", "opt10001", 0, "0601")
+        self.queue.push(_req)
 
     def on_exit(self, code: str, now_str: str):
-        name = self.status.pop(code, {}).get("name", code)
-        if name:
-            self.history.append({"time": now_str, "name": name, "action": "이탈"})
-            send_telegram(f"📤 <b>[전일고점돌파] 이탈</b>\n• {name} ({now_str})")
+        s = self.status.pop(code, None)
+        name = s["name"] if s else code
+        self.history.append({"time": now_str, "name": name, "action": "이탈"})
+        if s:
+            self._hoga_screen_map.pop(s["hoga_screen"], None)
+        send_telegram(
+            f"📤 <b>[전일고점돌파] 이탈</b>\n"
+            f"• {name} ({now_str})"
+        )
 
+    # =========================================================
+    # TR 수신 허브
+    # =========================================================
+    def _on_tr(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if rqname == "gdjum_basic":
+            self._on_tr_basic(trcode, rqname)
+            self.queue.done()
+        elif rqname == "gdjum_hoga":
+            code = self._hoga_screen_map.get(screen)
+            if code:
+                self._on_tr_hoga(code, trcode, rqname)
+            self.queue.done()
+        elif rqname == "gdjum_vol":
+            code = self._vol_q.popleft() if self._vol_q else None
+            if code:
+                self._on_tr_vol(code, trcode, rqname)
+            self.queue.done()
+
+    # =========================================================
+    # opt10001 — 기본정보 (전일고가, 진입가 계산)
+    # =========================================================
+    def _on_tr_basic(self, trcode: str, rqname: str):
+        code = self._basic_q.popleft() if self._basic_q else None
+        if not code or code not in self.status:
+            return
+        s = self.status[code]
+        k = self.kiwoom
+
+        try:
+            name      = k.dynamicCall("GetCommData(QString,QString,int,QString)",
+                                      trcode, rqname, 0, "종목명").strip()
+            price_str = k.dynamicCall("GetCommData(QString,QString,int,QString)",
+                                      trcode, rqname, 0, "현재가").strip()
+            high_str  = k.dynamicCall("GetCommData(QString,QString,int,QString)",
+                                      trcode, rqname, 0, "전일고가").strip()
+            price     = abs(int(price_str))
+            prev_high = abs(int(high_str))
+        except Exception as e:
+            print(f"  [전일고점] opt10001 파싱 오류: {e}")
+            self.status.pop(code, None)
+            return
+
+        if prev_high == 0:
+            print(f"  [전일고점] {name} 전일고가 0 → 스킵")
+            self.status.pop(code, None)
+            return
+
+        tick    = get_tick_size(prev_high)
+        entry_p = prev_high - tick * GDJUM_TICK_DOWN
+
+        s["name"]        = name or s["name"]
+        s["prev_high"]   = prev_high
+        s["tick_size"]   = tick
+        s["entry_price"] = entry_p
+        s["max_price"]   = price
+
+        # 호가 스크린 등록 (폴링 타이머가 다음 주기에 바로 사용)
+        self._hoga_screen_map[s["hoga_screen"]] = code
+
+        send_telegram(
+            f"🔍 <b>[전일고점돌파] 기본정보 수신</b>\n"
+            f"• <b>{name}</b>\n"
+            f"  전일고가: {prev_high:,}원\n"
+            f"  진입예정: {entry_p:,}원 (-{GDJUM_TICK_DOWN}틱)\n"
+            f"  ⏱ 호가/거래량 폴링 시작 (최대 {MAX_WAIT_MIN//60}시간)"
+        )
+        print(f"  [전일고점] {name} 전일고가:{prev_high:,} 진입예정:{entry_p:,}")
+
+        # 편입 직후 거래량 1회 조회
+        self._enqueue_vol(code)
+
+    # =========================================================
+    # 호가 폴링 — opt10004 (5초 주기)
+    # =========================================================
+    def _enqueue_hoga_polls(self):
+        """감시 중인 모든 코드의 opt10004 요청을 큐에 등록"""
+        for code, s in list(self.status.items()):
+            if s["order_sent"] or s["prev_high"] == 0:
+                continue
+            if self._is_expired(code):
+                self._handle_expired(code)
+                continue
+            screen = s["hoga_screen"]
+            self._hoga_screen_map[screen] = code
+            def _req(c=code, scr=screen):
+                self.kiwoom.dynamicCall(
+                    "SetInputValue(QString,QString)", "종목코드", c)
+                self.kiwoom.dynamicCall(
+                    "CommRqData(QString,QString,int,QString)",
+                    "gdjum_hoga", "opt10004", 0, scr)
+            self.queue.push(_req)
+
+    def _on_tr_hoga(self, code: str, trcode: str, rqname: str):
+        if code not in self.status:
+            return
+        s = self.status[code]
+        if s["hoga_ok"] or s["order_sent"]:
+            return
+
+        prev_high = s["prev_high"]
+        tick      = s["tick_size"]
+        k         = self.kiwoom
+
+        # 매도/매수 호가 10단계 읽어서 {price: 잔량금액} 맵 생성
+        hoga_map = {}
+        try:
+            # 현재가 업데이트 (8% 상승 체크용)
+            cur_str = k.dynamicCall("GetCommData(QString,QString,int,QString)",
+                                    trcode, rqname, 0, "현재가").strip()
+            if cur_str:
+                cur_price = abs(int(cur_str))
+                if cur_price > s["max_price"]:
+                    s["max_price"] = cur_price
+
+            for p_field, q_field in [
+                ("매도호가{}", "매도잔량{}"),
+                ("매수호가{}", "매수잔량{}"),
+            ]:
+                for i in range(1, 11):
+                    p_raw = k.dynamicCall(
+                        "GetCommData(QString,QString,int,QString)",
+                        trcode, rqname, 0, p_field.format(i)).strip()
+                    q_raw = k.dynamicCall(
+                        "GetCommData(QString,QString,int,QString)",
+                        trcode, rqname, 0, q_field.format(i)).strip()
+                    if not p_raw or not q_raw:
+                        continue
+                    price = abs(int(p_raw))
+                    qty   = abs(int(q_raw))
+                    if price > 0:
+                        hoga_map[price] = hoga_map.get(price, 0) + price * qty
+        except Exception as e:
+            print(f"  [전일고점] opt10004 파싱 오류 ({s['name']}): {e}")
+            return
+
+        # 전일고점 ±틱 4단계 각각 5천만원 이상 확인
+        targets = [
+            prev_high - tick,
+            prev_high,
+            prev_high + tick,
+            prev_high + tick * 2,
+        ]
+        all_ok = all(hoga_map.get(t, 0) >= GDJUM_TICK_MIN for t in targets)
+
+        if all_ok:
+            s["hoga_ok"] = True
+            print(f"  [전일고점] {s['name']} 호가 조건 통과!")
+            send_telegram(
+                f"✅ <b>[전일고점돌파] 호가 조건 OK!</b>\n"
+                f"• <b>{s['name']}</b>\n"
+                f"  전일고가 ±틱 4단계 각 {GDJUM_TICK_MIN/1e7:.0f}천만원 이상 확인\n"
+                f"  {'⏳ 거래량 확인 중...' if not s['vol_ok'] else '→ 주문 준비!'}"
+            )
+            if not s["vol_ok"]:
+                self._enqueue_vol(code)
+            else:
+                self._try_enter(code)
+
+    # =========================================================
+    # 거래량 조회 — opt10080 (5분봉)
+    # =========================================================
+    def _enqueue_vol(self, code: str):
+        # 이미 이 코드의 vol 요청이 deque에 있으면 중복 방지
+        if code in self._vol_q:
+            return
+        self._vol_q.append(code)
+        def _req():
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString,QString)", "종목코드", code)
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString,QString)", "틱범위", "5")
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString,QString)", "수정주가구분", "1")
+            self.kiwoom.dynamicCall(
+                "CommRqData(QString,QString,int,QString)",
+                "gdjum_vol", "opt10080", 0, "0603")
+        self.queue.push(_req)
+
+    def _on_tr_vol(self, code: str, trcode: str, rqname: str):
+        if code not in self.status:
+            return
+        s = self.status[code]
+        k = self.kiwoom
+
+        volumes = []
+        for i in range(GDJUM_CANDLE_N + 1):
+            try:
+                v = abs(int(k.dynamicCall(
+                    "GetCommData(QString,QString,int,QString)",
+                    trcode, rqname, i, "거래량").strip()))
+                volumes.append(v)
+            except Exception:
+                break
+
+        if len(volumes) < 2:
+            print(f"  [전일고점] {s['name']} 거래량 데이터 부족")
+            return
+
+        curr_vol = volumes[0]
+        avg_vol  = sum(volumes[1:]) / len(volumes[1:])
+        ratio    = curr_vol / avg_vol if avg_vol > 0 else 0
+        print(f"  [전일고점] {s['name']} 거래량 {ratio:.1f}배 (기준 {GDJUM_VOL_MULT}배)")
+
+        if ratio >= GDJUM_VOL_MULT:
+            s["vol_ok"] = True
+            print(f"  [전일고점] {s['name']} 거래량 조건 통과!")
+            send_telegram(
+                f"📊 <b>[전일고점돌파] 거래량 조건 OK!</b>\n"
+                f"• <b>{s['name']}</b>\n"
+                f"  돌파캔들: {curr_vol:,} | 평균: {avg_vol:,.0f} → {ratio:.1f}배\n"
+                f"  {'⏳ 호가 확인 대기 중...' if not s['hoga_ok'] else '→ 주문 준비!'}"
+            )
+            if s["hoga_ok"]:
+                self._try_enter(code)
+        else:
+            s["vol_ok"] = False
+
+    # =========================================================
+    # 진입 시도
+    # =========================================================
+    def _try_enter(self, code: str):
+        if code not in self.status:
+            return
+        s = self.status[code]
+        if s["order_sent"] or not (s["hoga_ok"] and s["vol_ok"]):
+            return
+        if self._is_expired(code):
+            self._handle_expired(code)
+            return
+
+        entry_p   = s["entry_price"]
+        max_price = s["max_price"]
+
+        # 8% 이상 상승 후 눌림 스킵
+        if entry_p > 0 and (max_price - entry_p) / entry_p >= GDJUM_RISE_SKIP:
+            send_telegram(
+                f"⚠️ <b>[전일고점돌파] 진입 스킵</b>\n"
+                f"• {s['name']}\n"
+                f"  사유: 8% 이상 상승 후 눌림 (최고가 {max_price:,}원)"
+            )
+            self.status.pop(code, None)
+            return
+
+        if code in tm.positions or len(tm.positions) >= MAX_POSITIONS:
+            print(f"  [전일고점] {s['name']} 포지션 한도 초과 — 스킵")
+            return
+        if not is_m2_open():
+            print(f"  [전일고점] 장외 시간 — 주문 스킵")
+            return
+
+        qty = calc_qty(entry_p)
+        ok  = tm.enter_position(
+            code, s["name"], entry_p,
+            condition=GDJUM_CONDITION,
+            order_type="limit",
+            limit_price=entry_p,
+        )
+        if ok:
+            s["order_sent"] = True
+            elapsed_min = int(
+                (datetime.now() - s["enter_time"]).total_seconds() / 60)
+            send_telegram(
+                f"🛒 <b>[전일고점돌파] 지정가 매수 주문!</b>\n"
+                f"• <b>{s['name']}</b>\n"
+                f"  전일고가: {s['prev_high']:,}원\n"
+                f"  진입가: {entry_p:,}원 (-{GDJUM_TICK_DOWN}틱)\n"
+                f"  수량: {qty}주  금액: {entry_p * qty:,}원\n"
+                f"  편입 후 경과: {elapsed_min}분\n"
+                f"  호가 ✅ | 거래량 ✅ | 모의투자"
+            )
+            print(f"  [전일고점] 주문 전송: {s['name']} {qty}주 @ {entry_p:,}")
+
+    # =========================================================
+    # 만료 처리
+    # =========================================================
+    def _is_expired(self, code: str) -> bool:
+        s = self.status.get(code)
+        if not s:
+            return True
+        return (datetime.now() - s["enter_time"]).total_seconds() / 60 > MAX_WAIT_MIN
+
+    def _handle_expired(self, code: str):
+        s = self.status.pop(code, None)
+        if not s:
+            return
+        self._hoga_screen_map.pop(s["hoga_screen"], None)
+        send_telegram(
+            f"⏰ <b>[전일고점돌파] 진입 포기</b>\n"
+            f"• {s['name']}\n"
+            f"  사유: 편입 후 {MAX_WAIT_MIN//60}시간 내 조건 미충족"
+        )
+        print(f"  [전일고점] {s['name']} 2시간 초과 → 진입 포기")
+
+    # =========================================================
+    # 무편입 알림 타이머
+    # =========================================================
+    def _reset_no_entry_timer(self):
+        self._no_entry_timer.stop()
+        self._no_entry_timer.start(NO_ENTRY_MINUTES * 60 * 1000)
+
+    def _on_no_entry_timeout(self):
+        send_telegram(
+            f"⚠️ <b>[전일고점돌파]</b>\n"
+            f"최근 {NO_ENTRY_MINUTES}분간 리스트에 안 떴음"
+        )
+        self._reset_no_entry_timer()
+
+    # =========================================================
+    # 일일 요약
+    # =========================================================
     def get_daily_summary(self) -> str:
         if not self.history:
             return "<b>[전일고점돌파]</b> 당일 편입/이탈 없음"
@@ -65,24 +440,10 @@ class Module2Gdjum:
         return "\n".join(lines)
 
     # =========================================================
-    # 10분 타이머
+    # 내부 유틸
     # =========================================================
-    def _reset_timer(self):
-        self._no_entry_timer.stop()
-        self._no_entry_timer.start(NO_ENTRY_MINUTES * 60 * 1000)
-
-    def _on_no_entry_timeout(self):
-        send_telegram(
-            f"⚠️ <b>[전일고점돌파]</b>\n"
-            f"최근 {NO_ENTRY_MINUTES}분간 리스트에 안 떴음"
-        )
-        self._reset_timer()
-
-    # =========================================================
-    # 모니터링 전용 — 호가/가격 무시
-    # =========================================================
-    def on_realtime_hoga(self, code: str, real_type: str):
-        pass
-
-    def on_realtime_price(self, code: str, price: int):
-        pass
+    def _alloc_hoga_screen(self) -> str:
+        self._hoga_screen_counter += 1
+        if self._hoga_screen_counter > 699:
+            self._hoga_screen_counter = HOGA_SCREEN_BASE
+        return str(self._hoga_screen_counter).zfill(4)

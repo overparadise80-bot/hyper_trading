@@ -473,10 +473,6 @@ def on_realtime_data(code, real_type, real_data):
     if real_type in ("주식호가잔량", "주식체결"):
         mod4.on_realtime(code, real_type)
 
-    # 전일고점돌파 호가 체크
-    if real_type == "주식호가잔량":
-        mod2_gj.on_realtime_hoga(code, real_type)
-
     # 포지션 보유 종목 실시간 체결가 (트레일링/손절)
     if real_type == "주식체결":
         # 현재가 캐시 업데이트
@@ -485,8 +481,6 @@ def on_realtime_data(code, real_type, real_data):
                 "GetCommRealData(QString, int)", real_type, 10)
             price = abs(int(price_str.strip()))
             tm.kiwoom_realtime_cache[code] = price
-            # 전일고점돌파 최고가 업데이트
-            mod2_gj.on_realtime_price(code, price)
         except:
             pass
         # 트레일링/손절
