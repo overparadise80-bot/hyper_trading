@@ -35,14 +35,14 @@ def send_screenshot_to_telegram(caption: str = "", ngrok_url: str = None):
             # HTML 파일 로드
             page.goto(f"file:///{HTML_PATH.replace(os.sep, '/')}")
 
-            # 세로 스크롤 뷰 (480px 폭 = 넉넉한 세로 포트레이트)
-            page.set_viewport_size({"width": 480, "height": 900})
+            # 3열 레이아웃 (>900px 조건 충족)
+            page.set_viewport_size({"width": 1200, "height": 900})
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(800)
 
             # 전체 페이지 높이에 맞게 viewport 재조정
             page_height = page.evaluate("document.body.scrollHeight")
-            page.set_viewport_size({"width": 480, "height": page_height})
+            page.set_viewport_size({"width": 1200, "height": page_height})
 
             # 스크린샷 저장 (임시 파일)
             tmp = tempfile.NamedTemporaryFile(

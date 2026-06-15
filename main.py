@@ -191,6 +191,43 @@ _last_triggered = {}
 # =============================================================
 # 프로세스 실행 / 종료
 # =============================================================
+def _kill_stale(name: str):
+    """OS 레벨에서 같은 스크립트를 실행 중인 기존 프로세스를 모두 종료한다.
+    main.py 재시작 시 processes 딕셔너리가 초기화되어 추적이 끊기는 문제 방지."""
+    if name not in SCRIPTS:
+        return
+    script_path = SCRIPTS[name][0]
+    script_name = os.path.basename(script_path)
+    try:
+        result = subprocess.check_output(
+            ['wmic', 'process', 'where',
+             f'CommandLine like "%{script_name}%"',
+             'get', 'ProcessId', '/format:csv'],
+            text=True, stderr=subprocess.DEVNULL, timeout=10,
+            creationflags=0x08000000
+        )
+        killed = []
+        for line in result.strip().splitlines():
+            parts = line.strip().split(',')
+            if len(parts) >= 2 and parts[-1].strip().isdigit():
+                pid = int(parts[-1].strip())
+                if pid == os.getpid():
+                    continue
+                try:
+                    subprocess.run(
+                        ['taskkill', '/F', '/PID', str(pid)],
+                        stderr=subprocess.DEVNULL, timeout=5,
+                        creationflags=0x08000000
+                    )
+                    killed.append(pid)
+                except Exception:
+                    pass
+        if killed:
+            print(f"[{now()}] 기존 {name} 프로세스 종료: {killed}")
+            time.sleep(1)
+    except Exception as e:
+        print(f"[{now()}] {name} 기존 프로세스 정리 오류: {e}")
+
 def run_script(name: str):
     if name in processes and processes[name].poll() is None:
         print(f"[{now()}] {name} 이미 실행 중 - 스킵")
@@ -209,6 +246,11 @@ def run_script(name: str):
     if not os.path.exists(python_exe):
         print(f"[{now()}] Python 없음: {python_exe}")
         return
+
+    # 시작 전 기존 인스턴스 강제 종료
+    # (main.py 재시작 시 processes 딕셔너리가 초기화되어 중복 실행 방지 불가)
+    if name in ("condition_kiwoom", "channel_monitor"):
+        _kill_stale(name)
 
     try:
         if name == "condition_kiwoom":
@@ -330,6 +372,7 @@ def schedule_loop():
                             print(f"[{now()}] condition_kiwoom 장중 자동 재시작! ({cnt}/{_MAX_RESTART})")
 
                             # ★ 60초 대기 (키움 서버 세션 정리 시간 확보)
+                            # _kill_stale은 run_script 내부에서 호출됨
                             print(f"[{now()}] 60초 대기 후 재시작...")
                             time.sleep(60)
                             run_script(name)

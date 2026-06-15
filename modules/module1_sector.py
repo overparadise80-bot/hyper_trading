@@ -390,17 +390,18 @@ class Module1Sector:
         # ── 텔레그램 메시지2: 52주신고가 (섹터별 그룹)
         top_theme_names = {t["theme"] for t in self.theme_ranking[:THEME_TOP_N]}
 
-        # 섹터별로 종목 그룹핑 (1종목이 여러 섹터에 속할 수 있음)
+        # 종목 → 가장 순위 높은 섹터 1개로만 매핑 (중복 제거)
         from collections import defaultdict
+        theme_rank_map = {t["theme"]: i for i, t in enumerate(self.theme_ranking)}
         theme_groups = defaultdict(list)
         for code, d in self.shingoga_detail.items():
             themes = CODE_TO_THEMES.get(code, [])
             if themes:
-                for th in themes:
-                    theme_groups[th].append({
-                        "name": d["name"],
-                        "rate": d["rate"],
-                    })
+                best = min(themes, key=lambda t: theme_rank_map.get(t, 9999))
+                theme_groups[best].append({
+                    "name": d["name"],
+                    "rate": d["rate"],
+                })
             else:
                 theme_groups["기타"].append({
                     "name": d["name"],
@@ -492,35 +493,38 @@ class Module1Sector:
 *{{box-sizing:border-box;margin:0;padding:0;}}
 body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:6px;}}
 .topbar{{background:#0c447c;border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}}
-.topbar-title{{color:#e6f1fb;font-size:14px;font-weight:600;white-space:nowrap;}}
+.topbar-title{{color:#e6f1fb;font-size:15px;font-weight:600;white-space:nowrap;}}
 .topbar-right{{display:flex;align-items:center;gap:10px;}}
 .live-dot{{width:7px;height:7px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:3px;}}
-.live-label{{color:#4ade80;font-size:11px;font-weight:600;}}
-.t-time{{color:#b5d4f4;font-size:12px;}}
-.t-next{{color:#85b7eb;font-size:10px;}}
-.grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;}}
-@media(min-width:900px){{.grid{{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));}}}}
+.live-label{{color:#4ade80;font-size:12px;font-weight:600;}}
+.t-time{{color:#b5d4f4;font-size:13px;}}
+.t-next{{color:#85b7eb;font-size:11px;}}
+.grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}}
+@media(max-width:900px){{.grid{{grid-template-columns:repeat(2,1fr);}}}}
+@media(max-width:600px){{.grid{{grid-template-columns:1fr;}}}}
 .card{{background:#f0f7ff;border:1px solid #b5d4f4;border-radius:8px;overflow:hidden;}}
-.card-head{{background:#185fa5;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;}}
-.rank-badge{{background:#0c447c;color:#b5d4f4;font-size:12px;font-weight:500;padding:2px 9px;border-radius:4px;margin-right:7px;}}
-.sector-name{{color:#e6f1fb;font-size:16px;font-weight:700;}}
-.sector-rate{{font-size:16px;font-weight:700;padding:3px 11px;border-radius:4px;background:#dceefb;min-width:66px;text-align:center;}}
+.card-head{{background:#185fa5;padding:7px 6px;display:flex;justify-content:space-between;align-items:center;}}
+.rank-badge{{background:#0c447c;color:#b5d4f4;font-size:12px;font-weight:500;padding:2px 4px;border-radius:4px;margin-right:3px;}}
+.sector-name{{color:#e6f1fb;font-size:17px;font-weight:700;}}
+.sector-rate{{font-size:15px;font-weight:700;padding:3px 5px;border-radius:4px;background:#dceefb;min-width:50px;text-align:center;}}
 .up-bar{{display:none;}}
-.card-body{{padding:4px 10px;}}
-.stock-row{{padding:7px 0;border-bottom:0.5px solid #c8e0f7;}}
+.card-body{{padding:4px 3px;}}
+.stock-row{{padding:6px 0;border-bottom:0.5px solid #c8e0f7;}}
 .stock-row:last-child{{border-bottom:none;}}
-.stock-info{{display:flex;justify-content:space-between;align-items:center;}}
-.sname{{font-size:13px;color:#111;font-weight:700;max-width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
-.sright{{display:flex;gap:5px;align-items:baseline;}}
-.sprice{{font-size:12px;color:#0c447c;margin-bottom:1px;}}
-.srate{{font-size:13px;font-weight:700;}}
-.samt{{font-size:11px;color:#378add;}}
+.stock-info{{display:flex;justify-content:space-between;align-items:flex-start;}}
+.sname{{font-size:14px;color:#111;font-weight:700;max-width:90px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:6px;}}
+.sleft{{display:flex;align-items:center;min-width:0;overflow:hidden;}}
+.price-prog-row{{display:flex;align-items:baseline;gap:6px;padding-left:9px;margin-bottom:1px;}}
+.prog-tag{{font-size:12px;white-space:nowrap;flex-shrink:0;font-weight:600;}}
+.sright{{display:flex;flex-direction:column;align-items:flex-end;gap:1px;}}
+.sprice{{font-size:13px;color:#0c447c;}}
+.srate{{font-size:14px;font-weight:700;}}
+.samt{{font-size:12px;color:#378add;}}
 .candle-wrap{{position:relative;height:8px;background:#dceefb;border-radius:2px;margin:3px 0 2px;overflow:hidden;}}
 .candle-fill{{position:absolute;top:1px;height:6px;border-radius:1px;}}
 .candle-center{{position:absolute;left:50%;top:0;width:2px;height:8px;background:#111;transform:translateX(-50%);}}
-.prog-row{{font-size:10px;height:13px;}}
 .footer{{margin-top:6px;background:#0c447c;border-radius:8px;padding:6px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;}}
-.footer-txt{{color:#85b7eb;font-size:10px;}}
+.footer-txt{{color:#85b7eb;font-size:11px;}}
 .footer-hi{{color:#b5d4f4;font-weight:500;}}
 </style>
 </head>
@@ -581,33 +585,42 @@ function candleBar(st){{
   </div>`;
 }}
 
-function progLabel(prog){{
+function inlineProg(prog){{
   if(prog === 0) return '';
-  const sign  = prog > 0 ? '+' : '';
+  const sign  = prog > 0 ? '+' : '-';
   const color = prog > 0 ? '#f5222d' : '#1677ff';
-  return `<div class="prog-row" style="color:${{color}}">PR ${{sign}}${{Math.abs(prog).toLocaleString()}}주</div>`;
+  return `<span class="prog-tag" style="color:${{color}}">PR${{sign}}${{Math.abs(prog).toLocaleString()}}</span>`;
 }}
 
 function render(){{
   document.getElementById('grid').innerHTML = SECTORS.map((sec,si)=>{{
     const upPct = Math.round(sec.up_ratio * 100);
     const rows = [...sec.stocks].sort((a,b)=>b.rate-a.rate).map((st)=>{{
-      const live  = livePrice[st.code];
-      const price = live ? live.price : st.price;
-      const rate  = live ? live.rate  : st.rate;
-      const dst   = Object.assign({{}}, st, {{price, rate}});
+      const live      = livePrice[st.code];
+      const price     = live ? live.price     : st.price;
+      const rate      = live ? live.rate      : st.rate;
+      const prog      = (live && live.prog      !== undefined) ? live.prog      : st.prog;
+      const amt       = (live && live.amt       !== undefined) ? live.amt       : st.amt;
+      const open_rate = (live && live.open_rate !== undefined) ? live.open_rate : st.open_rate;
+      const high_rate = (live && live.high_rate !== undefined) ? live.high_rate : st.high_rate;
+      const low_rate  = (live && live.low_rate  !== undefined) ? live.low_rate  : st.low_rate;
+      const dst = Object.assign({{}}, st, {{price, rate, prog, amt, open_rate, high_rate, low_rate}});
       const milkTag = st.milk ? '<span style="font-size:12px;margin-right:2px">🍼</span>' : '';
       return `<div class="stock-row">
         <div class="stock-info">
-          <span class="sname">${{milkTag}}${{st.name}}</span>
+          <div class="sleft">
+            <span class="sname">${{milkTag}}${{st.name}}</span>
+          </div>
           <div class="sright">
             <span class="srate" style="color:${{rc(rate)}}">${{fr(rate)}}</span>
-            <span class="samt">${{fa(st.amt)}}</span>
+            <span class="samt">${{fa(amt)}}</span>
           </div>
         </div>
-        <span class="sprice">${{fpr(price)}}</span>
+        <div class="price-prog-row">
+          <span class="sprice">${{fpr(price)}}</span>
+          ${{inlineProg(prog)}}
+        </div>
         ${{candleBar(dst)}}
-        ${{progLabel(st.prog)}}
       </div>`;
     }}).join('');
     return `<div class="card">

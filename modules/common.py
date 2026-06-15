@@ -5,6 +5,7 @@ common.py - 공통 설정 / 텔레그램 / 유틸
 """
 
 import os
+import threading
 import requests
 from datetime import datetime, time
 from dotenv import load_dotenv
@@ -107,17 +108,19 @@ HOLD_MINUTES   = 90
 # 텔레그램
 # =============================================================
 def send_telegram(msg: str):
-    try:
-        url    = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        chunks = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
-        for chunk in chunks:
-            requests.post(url, data={
-                "chat_id":    CHAT_ID,
-                "text":       chunk,
-                "parse_mode": "HTML"
-            }, timeout=10)
-    except Exception as e:
-        print(f"텔레그램 오류: {e}")
+    def _send():
+        try:
+            url    = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            chunks = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
+            for chunk in chunks:
+                requests.post(url, data={
+                    "chat_id":    CHAT_ID,
+                    "text":       chunk,
+                    "parse_mode": "HTML"
+                }, timeout=10)
+        except Exception as e:
+            print(f"텔레그램 오류: {e}")
+    threading.Thread(target=_send, daemon=True).start()
 
 # =============================================================
 # 유틸
@@ -155,3 +158,12 @@ def calc_qty(price: int) -> int:
 
 def now_str() -> str:
     return datetime.now().strftime("%m/%d %H:%M")
+
+
+
+
+
+    
+
+
+    
