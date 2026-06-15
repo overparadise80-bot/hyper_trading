@@ -15,11 +15,11 @@ HTML_PATH = os.path.abspath("monitor.html")
 def send_screenshot_to_telegram(caption: str = "", ngrok_url: str = None):
     """
     monitor.html을 playwright로 스크린샷 → 텔레그램 전송
-    ngrok_url이 있으면 캡션 아래에 링크 추가
+    ngrok_url이 있으면 캡션 + 별도 링크 메시지 전송
     """
-    if ngrok_url:
-        monitor_url = f"{ngrok_url}/monitor.html"
-        caption = f"{caption}\n\n<a href='{monitor_url}'>📊 모바일 실시간 보기</a>\n{monitor_url}"
+    monitor_url = f"{ngrok_url}/monitor.html" if ngrok_url else None
+    if monitor_url:
+        caption = f"{caption}\n🔗 {monitor_url}"
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:

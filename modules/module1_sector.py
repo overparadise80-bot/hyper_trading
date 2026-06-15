@@ -320,14 +320,14 @@ class Module1Sector:
     # ★ ngrok URL 조회
     # ==========================================================
     def _get_ngrok_url(self) -> str:
-        """ngrok 터널 URL 조회 (localhost:4040 API)"""
+        """ngrok 터널 베이스 URL 조회 (localhost:4040 API)"""
         try:
             resp = req.get("http://localhost:4040/api/tunnels", timeout=3)
             tunnels = resp.json().get("tunnels", [])
             for t in tunnels:
                 url = t.get("public_url", "")
                 if url.startswith("https://"):
-                    return url + "/monitor.html"
+                    return url   # 베이스 URL만 반환 (경로는 screenshot_sender에서 붙임)
         except:
             pass
         return ""
