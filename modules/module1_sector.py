@@ -605,7 +605,7 @@ function render(){{
       const high_rate = (live && live.high_rate !== undefined) ? live.high_rate : st.high_rate;
       const low_rate  = (live && live.low_rate  !== undefined) ? live.low_rate  : st.low_rate;
       const dst = Object.assign({{}}, st, {{price, rate, prog, amt, open_rate, high_rate, low_rate}});
-      const milkTag = st.milk ? '<span style="font-size:14px;margin-right:2px">🍼</span>' : '';
+      const milkTag = st.milk ? '<span style="font-size:14px;margin-right:2px">🚀</span><span style="background:#fa541c;color:#fff;font-size:11px;font-weight:800;padding:1px 5px;border-radius:3px;margin-right:4px;letter-spacing:0.5px;vertical-align:middle">주도</span>' : '';
       return `<div class="stock-row">
         <div class="stock-info">
           <div class="sleft">
