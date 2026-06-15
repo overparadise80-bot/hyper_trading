@@ -493,38 +493,38 @@ class Module1Sector:
 *{{box-sizing:border-box;margin:0;padding:0;}}
 body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:6px;}}
 .topbar{{background:#0c447c;border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}}
-.topbar-title{{color:#e6f1fb;font-size:15px;font-weight:600;white-space:nowrap;}}
+.topbar-title{{color:#e6f1fb;font-size:17px;font-weight:600;white-space:nowrap;}}
 .topbar-right{{display:flex;align-items:center;gap:10px;}}
 .live-dot{{width:7px;height:7px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:3px;}}
-.live-label{{color:#4ade80;font-size:12px;font-weight:600;}}
-.t-time{{color:#b5d4f4;font-size:13px;}}
-.t-next{{color:#85b7eb;font-size:11px;}}
+.live-label{{color:#4ade80;font-size:14px;font-weight:600;}}
+.t-time{{color:#b5d4f4;font-size:15px;}}
+.t-next{{color:#85b7eb;font-size:13px;}}
 .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}}
 @media(max-width:900px){{.grid{{grid-template-columns:repeat(2,1fr);}}}}
 @media(max-width:600px){{.grid{{grid-template-columns:1fr;}}}}
 .card{{background:#f0f7ff;border:1px solid #b5d4f4;border-radius:8px;overflow:hidden;}}
 .card-head{{background:#185fa5;padding:7px 6px;display:flex;justify-content:space-between;align-items:center;}}
-.rank-badge{{background:#0c447c;color:#b5d4f4;font-size:12px;font-weight:500;padding:2px 4px;border-radius:4px;margin-right:3px;}}
-.sector-name{{color:#e6f1fb;font-size:17px;font-weight:700;}}
-.sector-rate{{font-size:15px;font-weight:700;padding:3px 5px;border-radius:4px;background:#dceefb;min-width:50px;text-align:center;}}
+.rank-badge{{background:#0c447c;color:#b5d4f4;font-size:14px;font-weight:500;padding:2px 4px;border-radius:4px;margin-right:3px;}}
+.sector-name{{color:#e6f1fb;font-size:19px;font-weight:700;}}
+.sector-rate{{font-size:17px;font-weight:700;padding:3px 5px;border-radius:4px;background:#dceefb;min-width:50px;text-align:center;}}
 .up-bar{{display:none;}}
 .card-body{{padding:4px 3px;}}
 .stock-row{{padding:6px 0;border-bottom:0.5px solid #c8e0f7;}}
 .stock-row:last-child{{border-bottom:none;}}
 .stock-info{{display:flex;justify-content:space-between;align-items:flex-start;}}
-.sname{{font-size:14px;color:#111;font-weight:700;max-width:90px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:6px;}}
+.sname{{font-size:16px;color:#111;font-weight:700;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:6px;}}
 .sleft{{display:flex;align-items:center;min-width:0;overflow:hidden;}}
 .price-prog-row{{display:flex;align-items:baseline;gap:6px;padding-left:9px;margin-bottom:1px;}}
-.prog-tag{{font-size:12px;white-space:nowrap;flex-shrink:0;font-weight:600;}}
+.prog-tag{{font-size:14px;white-space:nowrap;flex-shrink:0;font-weight:600;}}
 .sright{{display:flex;flex-direction:column;align-items:flex-end;gap:1px;}}
-.sprice{{font-size:13px;color:#0c447c;}}
-.srate{{font-size:14px;font-weight:700;}}
-.samt{{font-size:12px;color:#378add;}}
+.sprice{{font-size:15px;color:#0c447c;}}
+.srate{{font-size:16px;font-weight:700;}}
+.samt{{font-size:14px;color:#378add;}}
 .candle-wrap{{position:relative;height:8px;background:#dceefb;border-radius:2px;margin:3px 0 2px;overflow:hidden;}}
 .candle-fill{{position:absolute;top:1px;height:6px;border-radius:1px;}}
 .candle-center{{position:absolute;left:50%;top:0;width:2px;height:8px;background:#111;transform:translateX(-50%);}}
 .footer{{margin-top:6px;background:#0c447c;border-radius:8px;padding:6px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;}}
-.footer-txt{{color:#85b7eb;font-size:11px;}}
+.footer-txt{{color:#85b7eb;font-size:13px;}}
 .footer-hi{{color:#b5d4f4;font-weight:500;}}
 </style>
 </head>
@@ -605,7 +605,7 @@ function render(){{
       const high_rate = (live && live.high_rate !== undefined) ? live.high_rate : st.high_rate;
       const low_rate  = (live && live.low_rate  !== undefined) ? live.low_rate  : st.low_rate;
       const dst = Object.assign({{}}, st, {{price, rate, prog, amt, open_rate, high_rate, low_rate}});
-      const milkTag = st.milk ? '<span style="font-size:12px;margin-right:2px">🍼</span>' : '';
+      const milkTag = st.milk ? '<span style="font-size:14px;margin-right:2px">🍼</span>' : '';
       return `<div class="stock-row">
         <div class="stock-info">
           <div class="sleft">
