@@ -437,7 +437,17 @@ def main():
     print(f"[{now()}] 텔레그램 봇 스레드 시작 완료")
     time.sleep(2)
 
-    # 2. 채널 모니터 (별도 프로세스 - 상시)
+    # 2. ngrok 웹서버 + 터널 (백그라운드 스레드 — URL 확보 후 텔레그램 자동 전송)
+    print(f"[{now()}] ngrok 모니터 서버 시작...")
+    from ngrok_server import start_monitor_server
+    threading.Thread(
+        target=start_monitor_server,
+        daemon=True,
+        name="NgrokServer"
+    ).start()
+    time.sleep(2)
+
+    # 3. 채널 모니터 (별도 프로세스 - 상시)
     print(f"[{now()}] 채널 모니터 시작...")
     run_script("channel_monitor")
     time.sleep(2)
