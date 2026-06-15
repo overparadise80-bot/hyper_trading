@@ -374,6 +374,28 @@ def register_realtime_conditions():
     _condition_poll_timer.start(5 * 1000)
     print("  [조건검색] 폴링 모드 5초 간격 시작")
 
+    # 15:25 일일 조건검색 이력 요약 전송
+    _schedule_daily_summary()
+
+def _schedule_daily_summary():
+    """15:25에 당일 황사장/전일고점돌파 전체 편입·이탈 이력을 텔레그램으로 전송"""
+    from datetime import time as dtime
+    now_dt = datetime.now()
+    target = now_dt.replace(hour=15, minute=25, second=0, microsecond=0)
+    if now_dt >= target:
+        return  # 이미 지난 시각이면 스킵
+    ms = int((target - now_dt).total_seconds() * 1000)
+    QTimer.singleShot(ms, _send_daily_summary)
+    print(f"  [일일요약] 15:25 전송 예약 ({ms // 60000}분 후)")
+
+def _send_daily_summary():
+    today = datetime.now().strftime("%m/%d")
+    header = f"<b>📋 조건검색 일일 이력 ({today})</b>\n{'─' * 20}"
+    hw_text = mod2_hw.get_daily_summary() if mod2_hw else "황사장 데이터 없음"
+    gj_text = mod2_gj.get_daily_summary() if mod2_gj else "전일고점 데이터 없음"
+    send_telegram(f"{header}\n\n{hw_text}\n\n{gj_text}")
+    print("  [일일요약] 조건검색 이력 전송 완료")
+
 def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
     """폴링 결과 수신 — 이전 목록과 비교해 신규 편입/이탈만 처리"""
     global _hw_active_codes, _gj_active_codes, _hw_initialized, _gj_initialized

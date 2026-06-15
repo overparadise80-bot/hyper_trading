@@ -13,8 +13,9 @@ NO_ENTRY_MINUTES = 10   # 무편입 알림 기준 (분)
 
 class Module2Gdjum:
     def __init__(self, kiwoom, queue):
-        self.kiwoom = kiwoom
-        self.status = {}   # code → {"name": str, "time": str}
+        self.kiwoom  = kiwoom
+        self.status  = {}   # code → {"name": str, "time": str}
+        self.history = []   # {"time": str, "name": str, "action": "편입"|"이탈"}
 
         self._no_entry_timer = QTimer()
         self._no_entry_timer.setSingleShot(True)
@@ -30,9 +31,9 @@ class Module2Gdjum:
     def on_enter(self, code: str, now_str: str):
         if code in self.status:
             return
-        # GetMasterCodeName: 로컬 OCX 캐시 즉시 반환, TR 큐 불필요
         name = self.kiwoom.dynamicCall("GetMasterCodeName(QString)", code).strip() or code
         self.status[code] = {"name": name, "time": now_str}
+        self.history.append({"time": now_str, "name": name, "action": "편입"})
         self._reset_timer()
         send_telegram(
             f"📌 <b>[전일고점돌파] 편입!</b>\n"
@@ -44,7 +45,20 @@ class Module2Gdjum:
     def on_exit(self, code: str, now_str: str):
         name = self.status.pop(code, {}).get("name", code)
         if name:
+            self.history.append({"time": now_str, "name": name, "action": "이탈"})
             send_telegram(f"📤 <b>[전일고점돌파] 이탈</b>\n• {name} ({now_str})")
+
+    def get_daily_summary(self) -> str:
+        if not self.history:
+            return "<b>[전일고점돌파]</b> 당일 편입/이탈 없음"
+        lines = ["<b>[전일고점돌파] 당일 이력</b>"]
+        for e in self.history:
+            icon = "📌" if e["action"] == "편입" else "📤"
+            lines.append(f"{icon} {e['time']} {e['action']}  {e['name']}")
+        enter_cnt = sum(1 for e in self.history if e["action"] == "편입")
+        exit_cnt  = sum(1 for e in self.history if e["action"] == "이탈")
+        lines.append(f"\n총 편입 {enter_cnt}회 | 이탈 {exit_cnt}회")
+        return "\n".join(lines)
 
     # =========================================================
     # 10분 타이머
@@ -68,4 +82,3 @@ class Module2Gdjum:
 
     def on_realtime_price(self, code: str, price: int):
         pass
-
