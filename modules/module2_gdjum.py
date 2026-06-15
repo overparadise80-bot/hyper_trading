@@ -12,11 +12,12 @@ from PyQt5.QtCore import QTimer
 from modules.common import (
     send_telegram, GDJUM_CONDITION, GDJUM_TICK_DOWN, GDJUM_RISE_SKIP,
     GDJUM_VOL_MULT, GDJUM_CANDLE_N, MAX_POSITIONS, is_m2_open,
-    get_tick_size, calc_qty
+    get_tick_size
 )
 from modules import trade_manager as tm
 
 GDJUM_TICK_MIN   = 5e7     # 호가잔량 최소 5천만원
+GDJUM_ENTRY_AMT  = 500_000 # 1회 진입금액 50만원
 MAX_WAIT_MIN     = 120      # 편입 후 최대 대기 (분)
 HOGA_POLL_MS     = 5_000    # 호가 폴링 주기
 NO_ENTRY_MINUTES = 10       # 무편입 알림 기준 (분)
@@ -345,7 +346,7 @@ class Module2Gdjum:
 
         elapsed_min = int(
             (datetime.now() - s["enter_time"]).total_seconds() / 60)
-        qty = calc_qty(entry_p)
+        qty = max(1, GDJUM_ENTRY_AMT // entry_p)
 
         # ★ 두 조건 모두 충족 — 이 시점이 첫 텔레그램 알림
         send_telegram(

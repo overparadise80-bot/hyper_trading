@@ -50,7 +50,7 @@ GDJUM_SCREEN     = "0210"
 GDJUM_TICK_MIN   = 1e8    # 호가당 최소 1억원
 GDJUM_VOL_MULT   = 2.0    # 거래량 배율
 GDJUM_CANDLE_N   = 60     # 평균 거래량 기준 캔들 수
-GDJUM_TICK_DOWN  = 4      # 진입가 = 전일고점 - 4틱
+GDJUM_TICK_DOWN  = 3      # 진입가 = 전일고점 - 3틱
 GDJUM_RISE_SKIP  = 0.08   # 8% 이상 상승 후 눌림 스킵
 
 # =============================================================
