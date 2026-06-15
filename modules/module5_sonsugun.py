@@ -265,17 +265,16 @@ class Module5Sonsugun:
             f"━━━━━━━━━━━━━━━━━━━━\n"
         )
 
-        for s in milk_stocks[:5]:   # 상위 5종목만
+        for s in milk_stocks[:10]:
+            news_items = self._fetch_naver_news(s["name"])
+            if not news_items:
+                continue
             t = self.top100_data.get(s["code"], {})
             msg += (
                 f"\n🍼 <b>{s['name']}</b>  "
                 f"{s['rate']:+.2f}%  대금{t.get('rank','?')}위\n"
             )
-            news_items = self._fetch_naver_news(s["name"])
-            if news_items:
-                msg += "\n".join(news_items) + "\n"
-            else:
-                msg += "  📰 뉴스 없음\n"
+            msg += "\n".join(news_items) + "\n"
 
         send_telegram(msg)
 
