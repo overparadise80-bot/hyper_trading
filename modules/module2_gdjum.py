@@ -28,6 +28,10 @@ class Module2Gdjum:
         self._reset_timer()
         print(f"  [전일고점] {NO_ENTRY_MINUTES}분 감시 타이머 시작")
 
+    def stop_monitoring(self):
+        self._no_entry_timer.stop()
+        print(f"  [전일고점] 무편입 알림 타이머 종료")
+
     def on_enter(self, code: str, now_str: str):
         if code in self.status:
             return

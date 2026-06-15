@@ -377,6 +377,31 @@ def register_realtime_conditions():
     # 15:25 일일 조건검색 이력 요약 전송
     _schedule_daily_summary()
 
+    # 15:30 폴링 자동 종료
+    _schedule_condition_stop()
+
+def _schedule_condition_stop():
+    """15:30에 조건검색 폴링 및 무편입 알림 타이머 자동 종료"""
+    now_dt = datetime.now()
+    target = now_dt.replace(hour=15, minute=30, second=0, microsecond=0)
+    if now_dt >= target:
+        _stop_conditions()
+        return
+    ms = int((target - now_dt).total_seconds() * 1000)
+    QTimer.singleShot(ms, _stop_conditions)
+    print(f"  [조건검색] 15:30 자동 종료 예약 ({ms // 60000}분 후)")
+
+def _stop_conditions():
+    global _condition_poll_timer
+    if _condition_poll_timer:
+        _condition_poll_timer.stop()
+        _condition_poll_timer = None
+    if mod2_hw:
+        mod2_hw.stop_monitoring()
+    if mod2_gj:
+        mod2_gj.stop_monitoring()
+    print("  [조건검색] 15:30 폴링 종료 — 무편입 알림 중단")
+
 def _schedule_daily_summary():
     """15:25에 당일 황사장/전일고점돌파 전체 편입·이탈 이력을 텔레그램으로 전송"""
     from datetime import time as dtime
