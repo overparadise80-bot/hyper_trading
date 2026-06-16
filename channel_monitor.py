@@ -39,6 +39,7 @@ GEMINI_URL = (
 PASSTHROUGH_CHANNELS = [
     "AWAKE - 실시간 주식 공시 정리채널",
     "주요공시 알리미",
+    "특징주 레이더",
 ]
 
 # 필터링 채널 (키워드 매칭된 메시지만 전달)
@@ -56,6 +57,7 @@ MONITOR_CHANNELS = PASSTHROUGH_CHANNELS + FILTER_CHANNELS
 PASSTHROUGH_KEYWORDS = [
     "실시간 주식 공시",
     "주요공시 알리미",
+    "특징주 레이더",
 ]
 
 # 필터 채널도 부분 문자열로 매칭 (이모지 무관)

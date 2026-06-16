@@ -30,6 +30,14 @@ THEME_STOCK_TOP  = 5
 HTML_OUTPUT      = "monitor.html"
 
 
+def _format_amount(eok: int) -> str:
+    """억 단위 거래대금을 'N조 M억' 형식으로 표시"""
+    if eok >= 10000:
+        jo, rem = divmod(eok, 10000)
+        return f"{jo}조 {rem}억" if rem else f"{jo}조"
+    return f"{eok}억"
+
+
 class Module1Sector:
 
     def __init__(self, kiwoom, queue):
@@ -41,6 +49,9 @@ class Module1Sector:
         self.mod5 = None   # Module5Sonsugun 참조 (set_sonsugun으로 주입)
         self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
         self.kiwoom.OnReceiveTrCondition.connect(self._on_cond_dispatch)
+        self._batch_watchdog = QTimer()
+        self._batch_watchdog.setSingleShot(True)
+        self._batch_watchdog.timeout.connect(self._on_batch_timeout)
         self.reset()
 
     def set_sonsugun(self, mod5):
@@ -50,6 +61,7 @@ class Module1Sector:
         self._condition_list = condition_list
 
     def reset(self):
+        self._batch_watchdog.stop()
         self.stock_data      = {}
         self._batches        = []
         self.scan_idx        = 0
@@ -86,6 +98,7 @@ class Module1Sector:
     # PHASE1+2: CommKwRqData 배치 조회 (100종목씩)
     # ==========================================================
     def _scan_batch(self, idx):
+        self._batch_watchdog.stop()
         self.scan_idx = idx
         if idx >= len(self._batches):
             self._phase2_done()
@@ -96,10 +109,14 @@ class Module1Sector:
             "CommKwRqData(QString, bool, int, int, QString, QString)",
             ";".join(b), False, len(b), 0, "복수종목조회", "0301"
         ))
+        # 글로벌 큐 워치독(8s)이 응답유실로 강제해제돼도 _on_kw_data가 안 불리면
+        # 배치 체인이 영원히 멈추므로, 모듈1 자체적으로 다음 배치로 강제 진행
+        self._batch_watchdog.start(12000)
 
     def _on_kw_data(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "복수종목조회":
             return
+        self._batch_watchdog.stop()
         cnt = self.kiwoom.dynamicCall("GetRepeatCnt(QString, QString)", trcode, rqname)
         k   = self.kiwoom
         for i in range(cnt):
@@ -125,6 +142,13 @@ class Module1Sector:
         next_idx = self.scan_idx + 1
         self._queue.done()
         self._scan_batch(next_idx)
+
+    def _on_batch_timeout(self):
+        # 이 배치 응답이 끝내 안 와서(키움 레이트리밋/유실) 글로벌 큐는
+        # 이미 강제해제됐지만 _on_kw_data가 안 불려 체인이 멈춘 상태 →
+        # 해당 100종목은 이번 사이클에서 누락 처리하고 다음 배치로 강제 진행
+        print(f"  [모듈1] 배치 {self.scan_idx + 1}/{len(self._batches)} 응답 없음 — 건너뛰고 계속")
+        self._scan_batch(self.scan_idx + 1)
 
     # ==========================================================
     # PHASE2 완료 → 테마 집계 → 프로그램 매매 조회
@@ -333,8 +357,18 @@ class Module1Sector:
         return ""
 
     def _build_and_send(self):
+        now_dt = datetime.now()
+
+        # 09:10~15:10 (모듈3 종가베팅 15:18 이전)에만 텔레그램 브리핑 전송
+        # 스크립트 시작 직후 첫 스캔 등 시간외 호출은 HTML만 갱신하고 전송은 스킵
+        if not is_m1_open():
+            print(f"  [모듈1] 브리핑 시간외({now_dt.strftime('%H:%M')}) - 텔레그램 전송 스킵")
+            self._update_html(now_dt.strftime("%H:%M:%S"))
+            if self._on_complete:
+                QTimer.singleShot(1000, self._on_complete)
+            return
+
         # 재시작 직후 중복 전송 방지: 마지막 전송 후 12분 이내면 스킵
-        now_dt   = datetime.now()
         ts_file  = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "logs", "m1_last_sent.txt")
         try:
@@ -369,9 +403,7 @@ class Module1Sector:
         msg1 += "━━━━━━━━━━━━━━━━━━━━\n\n"
         for i, t in enumerate(self.theme_ranking[:THEME_TOP_N]):
             medal   = medals[i] if i < len(medals) else f"{i+1}위"
-            amt_str = (f"{t['total_amount']//100}백억"
-                       if t['total_amount'] >= 100
-                       else f"{t['total_amount']}억")
+            amt_str = _format_amount(t['total_amount'])
             msg1 += (f"{medal} <b>{t['theme']}</b>\n"
                      f"   등락 <b>{t['avg_rate']:+.2f}%</b>  "
                      f"거래대금 {amt_str}  "
@@ -380,7 +412,7 @@ class Module1Sector:
                 if s["price"] == 0:
                     continue
                 prog_str = f"  프로그램 {s['prog']:+d}억" if s["prog"] != 0 else ""
-                milk_str = "🍼" if s["code"] in milk_codes else ""
+                milk_str = "🚀" if s["code"] in milk_codes else ""
                 msg1 += (f"   • {milk_str}{s['name']}  "
                          f"<b>{s['rate']:+.2f}%</b>  "
                          f"{s['price']:,}원  "
@@ -564,8 +596,10 @@ fetchLivePrices();
 function rc(r){{ return r>0?'#f5222d':r<0?'#1677ff':'#8c8c8c'; }}
 function fr(r){{ return (r>0?'+':'')+r.toFixed(2)+'%'; }}
 function fa(a){{
-  if(a>=10000) return Math.floor(a/10000)+'조';
-  if(a>=1000)  return Math.floor(a/100)+'백억';
+  if(a>=10000){{
+    const jo = Math.floor(a/10000), rem = a%10000;
+    return rem ? jo+'조 '+rem+'억' : jo+'조';
+  }}
   return a+'억';
 }}
 function fpr(p){{ return p.toLocaleString()+'원'; }}

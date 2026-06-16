@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 module5_sonsugun.py - 모듈5: 손수건 매매
-장중 30분마다 거래대금 상위 100종목(opt10029) × 주도섹터 주도주 교집합 계산
-- 교집합 종목 → 우유병🍼 마킹 (모듈1 UI/텔레그램 반영)
+장중 30분마다 거래대금 상위 100종목(opt10032) × 주도섹터 주도주 교집합 계산
+- 교집합 종목 → 우유병🚀 마킹 (모듈1 UI/텔레그램 반영)
 - 교집합이 가장 많은 섹터 = 최강 주도섹터
 - 매시 정각: 교집합 종목 네이버 뉴스 브리핑 (09~15시)
 - 15:05 종가 베팅 브리핑 텔레그램 전송 (수동 확인 후 베팅)
@@ -64,7 +64,7 @@ class Module5Sonsugun:
         self._chart_busy   = False
 
     # ----------------------------------------------------------
-    # opt10029: 거래대금 상위 100 조회
+    # opt10032: 거래대금상위요청 - 거래대금 상위 100 조회
     # ----------------------------------------------------------
     def _fetch_top100(self):
         if self._busy:
@@ -75,12 +75,9 @@ class Module5Sonsugun:
         def _do():
             k = self.kiwoom
             k.dynamicCall("SetInputValue(QString,QString)", "시장구분", "000")
-            k.dynamicCall("SetInputValue(QString,QString)", "정렬구분", "2")
             k.dynamicCall("SetInputValue(QString,QString)", "관리종목포함", "0")
-            k.dynamicCall("SetInputValue(QString,QString)", "신용구분", "0")
-            k.dynamicCall("SetInputValue(QString,QString)", "상하한포함", "1")
             k.dynamicCall("CommRqData(QString,QString,int,QString)",
-                          "손수건거래대금상위", "opt10029", 0, SCREEN_NO)
+                          "손수건거래대금상위", "opt10032", 0, SCREEN_NO)
 
         self._queue.push(_do)
 
@@ -97,7 +94,7 @@ class Module5Sonsugun:
         for i in range(cnt):
             try:
                 code   = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                        trcode, rqname, i, "종목코드").strip()
+                                        trcode, rqname, i, "종목코드").strip().lstrip('A')
                 name   = k.dynamicCall("GetCommData(QString,QString,int,QString)",
                                         trcode, rqname, i, "종목명").strip()
                 amount = abs(int(k.dynamicCall("GetCommData(QString,QString,int,QString)",
@@ -173,7 +170,7 @@ class Module5Sonsugun:
 
         if not top_sec or count == 0:
             send_telegram(
-                f"<b>🍼 [손수건] 15:05 브리핑</b>  {now_str}\n"
+                f"<b>🚀 [손수건] 15:05 브리핑</b>  {now_str}\n"
                 "교집합 종목 없음 - 오늘 베팅 대상 없음"
             )
             return
@@ -184,7 +181,7 @@ class Module5Sonsugun:
         )
 
         msg = (
-            f"<b>🍼 [손수건] 15:05 종가 베팅 브리핑</b>  {now_str}\n"
+            f"<b>🚀 [손수건] 15:05 종가 베팅 브리핑</b>  {now_str}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🏆 최강 주도섹터: <b>{top_sec['theme']}</b>\n"
             f"   평균등락 {top_sec['avg_rate']:+.2f}%  교집합 {count}종목\n\n"
@@ -193,7 +190,7 @@ class Module5Sonsugun:
         for s in milk_stocks[:10]:
             t = self.top100_data.get(s["code"], {})
             msg += (
-                f"  🍼 {s['name']}  "
+                f"  🚀 {s['name']}  "
                 f"{s['rate']:+.2f}%  "
                 f"{s['price']:,}원  "
                 f"대금{t.get('rank','?')}위  {t.get('amount_eok', 0)}억\n"
@@ -248,7 +245,7 @@ class Module5Sonsugun:
 
         if not milk_codes or not top_sec:
             send_telegram(
-                f"<b>🍼 [손수건] {now_str} 뉴스</b>\n"
+                f"<b>🚀 [손수건] {now_str} 뉴스</b>\n"
                 "교집합 종목 없음"
             )
             return
@@ -260,7 +257,7 @@ class Module5Sonsugun:
         )
 
         msg = (
-            f"<b>🍼 [손수건] {now_str} 뉴스 브리핑</b>\n"
+            f"<b>🚀 [손수건] {now_str} 뉴스 브리핑</b>\n"
             f"🏆 {top_sec['theme']}  {top_sec['avg_rate']:+.2f}%  교집합 {count}종목\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
         )
@@ -271,7 +268,7 @@ class Module5Sonsugun:
                 continue
             t = self.top100_data.get(s["code"], {})
             msg += (
-                f"\n🍼 <b>{s['name']}</b>  "
+                f"\n🚀 <b>{s['name']}</b>  "
                 f"{s['rate']:+.2f}%  대금{t.get('rank','?')}위\n"
             )
             msg += "\n".join(news_items) + "\n"
@@ -363,7 +360,7 @@ class Module5Sonsugun:
             candles.reverse()   # 오래된 것 → 최신 순
             t100 = self.top100_data.get(code, {})
             caption = (
-                f"🍼 <b>{name}</b>  {rate:+.2f}%  "
+                f"🚀 <b>{name}</b>  {rate:+.2f}%  "
                 f"대금{t100.get('rank','?')}위  {t100.get('amount_eok',0)}억\n"
                 f"15분봉 ({len(candles)}캔들)"
             )

@@ -3,9 +3,11 @@
 module2_gdjum.py - 단타검색식전일고점돌파 자동매매 (B안: CommRqData 폴링)
 - SetRealReg 없음 — 호가 감시를 opt10004 CommRqData 5초 폴링으로 대체
 - 모의투자 계좌(ACCOUNT_NUM)로 지정가 매수 실행
-- 편입 → 기본정보조회(opt10001) → 호가폴링(opt10004) + 거래량조회(opt10080) → 진입
+- 편입 → 일봉조회(opt10081, 전일고가) → 호가폴링(opt10004) + 거래량조회(opt10080) → 진입
 """
 
+import os
+import time
 from collections import deque
 from datetime import datetime
 from PyQt5.QtCore import QTimer
@@ -16,12 +18,17 @@ from modules.common import (
 )
 from modules import trade_manager as tm
 
-GDJUM_TICK_MIN   = 5e7     # 호가잔량 최소 5천만원
+GDJUM_TICK_MIN   = 2e7     # 호가잔량 최소 2천만원
 GDJUM_ENTRY_AMT  = 500_000 # 1회 진입금액 50만원
 MAX_WAIT_MIN     = 120      # 편입 후 최대 대기 (분)
 HOGA_POLL_MS     = 5_000    # 호가 폴링 주기
 NO_ENTRY_MINUTES = 10       # 무편입 알림 기준 (분)
 HOGA_SCREEN_BASE = 620      # 호가 폴링 전용 스크린번호 범위 시작
+
+# ★ 같은 스크립트가 중복 프로세스로 떠 있는 경우 알림이 동시에 두 번 발송되는 것을 방지
+# (파일 mtime 기준 dedupe — 두 프로세스의 타이머는 거의 동시에 시작되므로 짧은 윈도우로 충분)
+_NO_ENTRY_FLAG  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs", "gdjum_no_entry.flag")
+_DEDUPE_SEC     = 30
 
 
 class Module2Gdjum:
@@ -97,8 +104,10 @@ class Module2Gdjum:
             self.kiwoom.dynamicCall(
                 "SetInputValue(QString,QString)", "종목코드", code)
             self.kiwoom.dynamicCall(
+                "SetInputValue(QString,QString)", "수정주가구분", "1")
+            self.kiwoom.dynamicCall(
                 "CommRqData(QString,QString,int,QString)",
-                "gdjum_basic", "opt10001", 0, "0601")
+                "gdjum_basic", "opt10081", 0, "0601")
         self.queue.push(_req)
 
     def on_exit(self, code: str, now_str: str):
@@ -133,7 +142,7 @@ class Module2Gdjum:
             self.queue.done()
 
     # =========================================================
-    # opt10001 — 기본정보 (전일고가, 진입가 계산)
+    # opt10081 — 일봉차트 (index 0: 당일, index 1: 전일 → 전일고가, 진입가 계산)
     # =========================================================
     def _on_tr_basic(self, trcode: str, rqname: str):
         code = self._basic_q.popleft() if self._basic_q else None
@@ -141,18 +150,17 @@ class Module2Gdjum:
             return
         s = self.status[code]
         k = self.kiwoom
+        name = s["name"]
 
         try:
-            name      = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                      trcode, rqname, 0, "종목명").strip()
             price_str = k.dynamicCall("GetCommData(QString,QString,int,QString)",
                                       trcode, rqname, 0, "현재가").strip()
             high_str  = k.dynamicCall("GetCommData(QString,QString,int,QString)",
-                                      trcode, rqname, 0, "전일고가").strip()
+                                      trcode, rqname, 1, "고가").strip()
             price     = abs(int(price_str))
             prev_high = abs(int(high_str))
         except Exception as e:
-            print(f"  [전일고점] opt10001 파싱 오류: {e}")
+            print(f"  [전일고점] opt10081 파싱 오류: {e}")
             self.status.pop(code, None)
             return
 
@@ -164,7 +172,6 @@ class Module2Gdjum:
         tick    = get_tick_size(prev_high)
         entry_p = prev_high - tick * GDJUM_TICK_DOWN
 
-        s["name"]        = name or s["name"]
         s["prev_high"]   = prev_high
         s["tick_size"]   = tick
         s["entry_price"] = entry_p
@@ -401,11 +408,18 @@ class Module2Gdjum:
         self._no_entry_timer.start(NO_ENTRY_MINUTES * 60 * 1000)
 
     def _on_no_entry_timeout(self):
+        try:
+            if os.path.exists(_NO_ENTRY_FLAG) and \
+               time.time() - os.path.getmtime(_NO_ENTRY_FLAG) < _DEDUPE_SEC:
+                return  # 중복 프로세스가 이미 보냄
+            with open(_NO_ENTRY_FLAG, "w") as f:
+                f.write(str(time.time()))
+        except Exception:
+            pass
         send_telegram(
             f"⚠️ <b>[전일고점돌파]</b>\n"
             f"최근 {NO_ENTRY_MINUTES}분간 리스트에 안 떴음"
         )
-        self._reset_no_entry_timer()
 
     # =========================================================
     # 일일 요약
