@@ -103,10 +103,10 @@ def main():
     # ─────────────────────────────────────────
     # 4단계: 저장
     # ─────────────────────────────────────────
-    with open("theme_map.json", "w", encoding="utf-8") as f:
+    with open("theme_map_v2.json", "w", encoding="utf-8") as f:
         json.dump(theme_map, f, ensure_ascii=False, indent=2)
 
-    with open("code_to_themes.json", "w", encoding="utf-8") as f:
+    with open("code_to_themes_v2.json", "w", encoding="utf-8") as f:
         json.dump(dict(code_to_themes), f, ensure_ascii=False, indent=2)
 
     # ─────────────────────────────────────────
@@ -142,7 +142,7 @@ def main():
     with open("theme_stats.txt", "w", encoding="utf-8") as f:
         f.write(stats)
 
-    print("✅ 저장 완료: theme_map.json / code_to_themes.json / theme_stats.txt")
+    print("✅ 저장 완료: theme_map_v2.json / code_to_themes_v2.json / theme_stats.txt")
 
 if __name__ == "__main__":
     main()

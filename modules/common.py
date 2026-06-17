@@ -70,7 +70,8 @@ M3_INST_MIN     = 5
 # =============================================================
 M4_START          = time(9, 0)
 M4_END            = time(15, 20)
-M4_MAX_POSITIONS  = 3
+M4_MAX_POSITIONS  = 5
+H52_MAX_POSITIONS = 10
 TOP_N             = 100
 BULK_LOW          = 3000
 BULK_MID          = 1000

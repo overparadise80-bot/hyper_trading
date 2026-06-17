@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-module4_chalna.py - 찰나의 매매
-- 거래량 상위 100종목 실시간 호가 구독
+module4_chalna.py - 찰나의 매매 + 52주 신고가 돌파
+공통 인프라: 거래량 상위 100종목 실시간 구독 (10분 갱신)
+
+[전략1] 찰나의 매매
 - 조건: 매도잔량>=매수잔량x2 + 프로그램순매수 + 체결강도>100% + 대량체결 + 매도벽붕괴
-- 최대 3종목 자동매매
+- 최대 3종목
+
+[전략2] 52주 신고가 돌파
+- 조건: 현재가 >= 250일최고가 (top100 거래량 필터 내재)
+- 진입: 25만원 시장가, 진입가 -2% 추가매수 25만원
+- 한도: 전체 MAX_POSITIONS 공유
 """
 
 from datetime import datetime
@@ -18,6 +25,10 @@ class Module4Chalna:
         self.names       = {}
         self.cache       = {}   # {코드: 실시간 데이터}
         self.alerted     = {}   # {코드: datetime}
+        self.alerted_h52 = {}   # {코드: datetime} — 신고가 알림 쿨다운
+        self.high52      = {}   # {코드: 250일최고가}
+        self._h52_queue  = []
+        self._h52_idx    = 0
         self.refresh_timer = QTimer()
         self._paused     = False  # 모듈1 스캔 중 구독 차단 플래그
         self._tr_handler = None
@@ -30,7 +41,7 @@ class Module4Chalna:
     def start(self):
         self._fetch_top100()
         self.refresh_timer.timeout.connect(self._fetch_top100)
-        self.refresh_timer.start(30 * 60 * 1000)
+        self.refresh_timer.start(10 * 60 * 1000)
         print("[모듈4] 찰나의 매매 시작")
 
     def _fetch_top100(self):
@@ -68,9 +79,50 @@ class Module4Chalna:
                     }
             except:
                 break
-        self.top100 = new_codes
-        print(f"  [모듈4] top100 갱신: {len(self.top100)}개")
-        QTimer.singleShot(500, self._subscribe)
+        self.top100     = new_codes
+        self._h52_queue = list(new_codes)
+        self._h52_idx   = 0
+        self.high52     = {}
+        print(f"  [모듈4] top100 갱신: {len(self.top100)}개 → 52주최고가 조회 시작")
+        QTimer.singleShot(500, self._fetch_next_high52)
+
+    def _fetch_next_high52(self):
+        if self._h52_idx >= len(self._h52_queue):
+            print(f"  [모듈4] 52주최고가 {len(self.high52)}개 로드 완료 → 실시간 구독")
+            QTimer.singleShot(500, self._subscribe)
+            return
+        code = self._h52_queue[self._h52_idx]
+        self._tr_handler = self._on_tr_high52
+        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
+        self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
+                                "M4고가조회", "opt10001", 0, "9101")
+
+    def _on_tr_high52(self, screen, rqname, trcode, recordname, prev_next, *args):
+        if rqname != "M4고가조회":
+            return
+        self._tr_handler = None
+        # ── 필드명 확인용 임시 덤프 (확인 후 삭제) ──────────────────
+        if self._h52_idx == 0:
+            for fname in ["250최고", "250최고가", "연중최고", "52주최고", "52주최고가"]:
+                try:
+                    v = self.kiwoom.dynamicCall(
+                        "GetCommData(QString,QString,int,QString)",
+                        trcode, rqname, 0, fname).strip()
+                    print(f"  [opt10001 필드확인] '{fname}' = '{v}'")
+                except Exception as e:
+                    print(f"  [opt10001 필드확인] '{fname}' 오류: {e}")
+        # ─────────────────────────────────────────────────────────────
+        try:
+            raw = self.kiwoom.dynamicCall(
+                "GetCommData(QString,QString,int,QString)",
+                trcode, rqname, 0, "250최고").strip()
+            price = abs(int(raw))
+            if price > 0:
+                self.high52[self._h52_queue[self._h52_idx]] = price
+        except:
+            pass
+        self._h52_idx += 1
+        QTimer.singleShot(200, self._fetch_next_high52)
 
     def pause_realtime(self):
         """모듈1 스캔 중 실시간 구독 완전 차단"""
@@ -132,6 +184,8 @@ class Module4Chalna:
                     pass
 
         self._check(code, cache)
+        if real_type == "주식체결" and cache.get("price", 0) > 0:
+            self._check_high52(code, cache["price"], cache.get("last_bulk", 0))
 
     def _get_bulk_threshold(self, price: int) -> int:
         if price <= PRICE_B1:   return BULK_LOW
@@ -196,7 +250,7 @@ class Module4Chalna:
         msg += f"  매도벽: {wall_change:+.1%} 붕괴!\n"
 
         if can_enter:
-            qty = calc_qty(price)
+            qty = max(1, 500_000 // price)   # 50만원 기준, 50만원 이상 종목은 1주
             msg += f"\n  → 자동매매 진입! {qty}주  {price*qty:,}원"
         elif code in tm.positions:
             msg += "\n  → 이미 보유 중"
@@ -213,11 +267,75 @@ class Module4Chalna:
                        if p.get("condition") == "찰나의매매")
         if code in tm.positions or m4_count >= M4_MAX_POSITIONS:
             return
-        ok = tm.enter_position(code, name, price, "찰나의매매", "market")
+        ok = tm.enter_position(code, name, price, "찰나의매매", "market",
+                               entry_amount=500_000, add_buy=False)
         if ok:
             qty = tm.positions[code]["qty"]
             send_telegram(
                 f"<b>찰나의 매매 자동진입!</b>\n"
                 f"• {name}  {qty}주  시장가\n"
                 f"  진입금액: {price*qty:,}원"
+            )
+
+    # =========================================================
+    # 52주 신고가 돌파 스캔 + 자동진입
+    # =========================================================
+    def _check_high52(self, code: str, price: int, bulk: int):
+        high52 = self.high52.get(code, 0)
+        if high52 <= 0 or price < high52:
+            return
+
+        now  = datetime.now()
+        last = self.alerted_h52.get(code)
+        if last and (now - last).total_seconds() < ALERT_COOLDOWN:
+            return
+        self.alerted_h52[code] = now
+
+        name    = self.names.get(code, code)
+        now_str = now.strftime("%H:%M:%S")
+        rate    = (price - high52) / high52
+
+        h52_count = sum(1 for p in tm.positions.values()
+                        if p.get("condition") == "신고가돌파")
+        can_enter = (
+            code not in tm.positions
+            and h52_count < H52_MAX_POSITIONS
+            and len(tm.positions) < MAX_POSITIONS
+            and is_m4_open()
+        )
+
+        qty  = calc_qty(price)
+        msg  = f"<b>📈 52주 신고가 돌파!</b> ({now_str})\n"
+        msg += f"• <b>{name}</b>  {price:,}원\n"
+        msg += f"  52주최고: {high52:,}원  ({rate:+.2%} 돌파)\n"
+        msg += f"  거래량상위 top100\n"
+
+        if can_enter:
+            msg += f"\n  → 자동 진입! {qty}주  {price * qty:,}원"
+            msg += f"\n  (추매: 진입가 -2% 시 +{qty}주)"
+        elif code in tm.positions:
+            msg += "\n  → 이미 보유 중"
+        elif h52_count >= H52_MAX_POSITIONS:
+            msg += f"\n  → 신고가 최대 {H52_MAX_POSITIONS}종목 초과"
+        else:
+            msg += f"\n  → 전체 포지션 한도 초과 ({len(tm.positions)}/{MAX_POSITIONS})"
+
+        send_telegram(msg)
+        print(f"  [모듈4-신고가] {name} {price:,}원 (52주최고 {high52:,} | {rate:+.2%})")
+
+        if can_enter:
+            QTimer.singleShot(200, lambda: self._enter_high52(code, name, price))
+
+    def _enter_high52(self, code: str, name: str, price: int):
+        h52_count = sum(1 for p in tm.positions.values()
+                        if p.get("condition") == "신고가돌파")
+        if code in tm.positions or h52_count >= H52_MAX_POSITIONS or len(tm.positions) >= MAX_POSITIONS:
+            return
+        ok = tm.enter_position(code, name, price, "신고가돌파")
+        if ok:
+            qty = tm.positions[code]["qty"]
+            send_telegram(
+                f"<b>신고가 자동진입!</b>\n"
+                f"• {name}  {qty}주  시장가\n"
+                f"  진입금액: {price * qty:,}원"
             )

@@ -52,7 +52,12 @@ class Module1Sector:
         self._batch_watchdog = QTimer()
         self._batch_watchdog.setSingleShot(True)
         self._batch_watchdog.timeout.connect(self._on_batch_timeout)
+        self._shingoga_watchdog = QTimer()
+        self._shingoga_watchdog.setSingleShot(True)
+        self._shingoga_watchdog.timeout.connect(self._on_shingoga_timeout)
         self.reset()
+
+        self.theme_ranking   = []   # reset()에서 유지됨 — 스캔 완료 시 _calc_theme_ranking에서만 갱신
 
     def set_sonsugun(self, mod5):
         self.mod5 = mod5
@@ -62,10 +67,11 @@ class Module1Sector:
 
     def reset(self):
         self._batch_watchdog.stop()
+        self._shingoga_watchdog.stop()
         self.stock_data      = {}
         self._batches        = []
         self.scan_idx        = 0
-        self.theme_ranking   = []
+        # theme_ranking은 초기화하지 않음 — 스캔 중 모듈5가 이전 결과를 참조할 수 있도록
         self.prog_queue      = []
         self.prog_idx        = 0
         self._prog_done      = False
@@ -260,12 +266,21 @@ class Module1Sector:
     # ==========================================================
     # PHASE5: 52주신고가
     # ==========================================================
+    def _on_shingoga_timeout(self):
+        print("  [모듈1] 52주신고가 응답 없음 (12s) → 브리핑 강제 진행")
+        try:
+            self.kiwoom.OnReceiveTrCondition.disconnect(self._on_shingoga_condition)
+        except:
+            pass
+        self._phase5_done([])
+
     def _run_shingoga(self):
         if not self._condition_list or "52주신고가" not in self._condition_list:
             print("  52주신고가 조건식 없음 - 스킵")
             self._phase5_done([])
             return
         idx = self._condition_list["52주신고가"]
+        self._shingoga_watchdog.start(12000)
         self._queue.push(lambda: self.kiwoom.dynamicCall(
             "SendCondition(QString, QString, int, int)",
             "0201", "52주신고가", int(idx), 0))
@@ -273,6 +288,7 @@ class Module1Sector:
     def _on_shingoga_condition(self, screen, code_list, condition_name, idx, prev_next):
         if condition_name != "52주신고가":
             return
+        self._shingoga_watchdog.stop()
         codes = [c for c in code_list.split(';') if c]
         print(f"  52주신고가 {len(codes)}개 수신")
         try:

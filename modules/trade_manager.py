@@ -211,7 +211,7 @@ def exit_position(code: str, reason: str = "청산"):
         f"• {pos['name']}\n"
         f"  매수단가: {entry_price:,}원\n"
         f"  매도단가: {cur_price:,}원\n"
-        f"  수익률: <b>{pnl_rate:+.2f}%</b>\n"
+        f"  수익률: <b>{pnl_rate:+.2%}</b>\n"
         f"  수익금액: {pnl_amount:+,.0f}원\n"
         f"  경과시간: {elapsed}분\n"
         f"  매매사유: {pos['condition']}"
@@ -348,7 +348,12 @@ def on_chejan(gubun: str, kiwoom):
 
     if code in positions and "매수" in order_type:
         pos = positions[code]
-        pos["entry_price"] = ep
-        pos["stop_price"]  = ep * (1 + STOP_LOSS_RATE)
-        pos["high_price"]  = ep
+        if not pos.get("add_bought"):
+            # 1차 매수 체결: 실체결가로 진입가 확정
+            pos["entry_price"] = ep
+            pos["stop_price"]  = ep * (1 + STOP_LOSS_RATE)
+            pos["high_price"]  = ep
+        else:
+            # 2차 추가매수 체결: check_add_buy에서 계산한 가중평균 유지, stop_price만 갱신
+            pos["stop_price"] = pos["entry_price"] * (1 + STOP_LOSS_RATE)
         print(f"  [체결확인] {name} 매수 {eq}주 @ {ep:,}원")

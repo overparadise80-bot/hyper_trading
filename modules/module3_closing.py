@@ -27,6 +27,7 @@ class Module3Closing:
         self.inst_idx        = 0
         self.inst_days_data  = {}
         self.final_list      = []
+        self._inst_watchdog  = None
 
     def setup_timer(self):
         now    = datetime.now()
@@ -157,9 +158,28 @@ class Module3Closing:
         self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
                                 "모듈3기관조회", "opt10059", 0, "0702")
 
+        if self._inst_watchdog:
+            self._inst_watchdog.stop()
+        self._inst_watchdog = QTimer()
+        self._inst_watchdog.setSingleShot(True)
+        self._inst_watchdog.timeout.connect(lambda: self._inst_timeout(idx))
+        self._inst_watchdog.start(5000)
+
+    def _inst_timeout(self, idx: int):
+        if self.inst_idx != idx:
+            return
+        code = self.inst_queue[idx]
+        name = self.candidate_data.get(code, {}).get("name", code)
+        print(f"  기관 {name}: TR 응답 없음 — 스킵 (days=0)")
+        self.inst_days_data[code] = 0
+        QTimer.singleShot(0, lambda: self._scan_inst(idx + 1))
+
     def _on_tr_inst(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "모듈3기관조회":
             return
+        if self._inst_watchdog:
+            self._inst_watchdog.stop()
+            self._inst_watchdog = None
         code = self.inst_queue[self.inst_idx]
         days = 0
         for i in range(M3_INST_DAYS):

@@ -139,6 +139,10 @@ SCRIPTS = {
         os.path.join(BASE_DIR, "condition_kiwoom_v2.py"),
         PYTHON_32
     ),
+    "build_theme_map": (
+        os.path.join(BASE_DIR, "build_theme_map.py"),
+        PYTHON_NORMAL
+    ),
     "morning_briefing": (
         os.path.join(BASE_DIR, "morning_briefing.py"),
         PYTHON_NORMAL
@@ -305,6 +309,12 @@ def schedule_loop():
         try:
             if is_weekday():
 
+                # 08:00 - 테마맵 갱신 (자동매매와 동시 시작)
+                if should_run("build_theme_map", 8, 0):
+                    print(f"[{now()}] 테마맵 갱신 시작!")
+                    run_script("build_theme_map")
+                    mark_done("build_theme_map")
+
                 # 07:50 - 모닝 브리핑
                 if should_run("morning_briefing", 7, 50):
                     print(f"[{now()}] 모닝 브리핑 시작!")
@@ -458,7 +468,7 @@ def main():
     # 4. 스케줄 루프
     print(f"\n[{now()}] 스케줄 대기 중...")
     print(f"  07:50 → morning_briefing.py")
-    print(f"  08:00 → condition_kiwoom_v2.py (venv32)")
+    print(f"  08:00 → condition_kiwoom_v2.py (venv32) + build_theme_map.py")
     print(f"  20:00 → primary_notice.py")
     print(f"  Ctrl+C로 종료\n")
     schedule_loop()

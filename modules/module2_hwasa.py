@@ -48,6 +48,8 @@ class Module2Hwasa:
         self.status[code] = {"name": name, "time": now_str}
         self.history.append({"time": now_str, "name": name, "action": "편입"})
         self._reset_timer()
+        # 7분 대기 동안 실시간 가격을 캐시에 쌓기 위해 미리 구독
+        tm.subscribe_realtime(code)
         send_telegram(
             f"📌 <b>[황사장] 편입!</b> ({now_str})\n"
             f"• <b>{name}</b>"
@@ -64,6 +66,9 @@ class Module2Hwasa:
         timer = self._entry_timers.pop(code, None)
         if timer:
             timer.stop()
+        # 포지션 없이 이탈하면 실시간 구독 해제
+        if code not in tm.positions:
+            tm.unsubscribe_realtime(code)
         name = self.status.pop(code, {}).get("name", code)
         if name:
             self.history.append({"time": now_str, "name": name, "action": "이탈"})
@@ -78,13 +83,12 @@ class Module2Hwasa:
             return   # 그 사이 이탈함 — 진입 안 함
         name = self.status[code]["name"]
 
-        try:
-            price = abs(int(
-                self.kiwoom.dynamicCall("GetMasterLastPrice(QString)", code).strip()))
-        except (TypeError, ValueError):
-            price = 0
+        # 실시간 캐시 우선 (편입 시 subscribe_realtime으로 7분간 누적)
+        price = tm.kiwoom_realtime_cache.get(code, 0)
         if price <= 0:
-            print(f"  [황사장] {name} 현재가 조회 실패 — 진입 스킵")
+            # 캐시 미수신 시 GetMasterLastPrice는 전일 종가를 반환하므로 진입 포기
+            print(f"  [황사장] {name} 현재가 미수신 — 진입 스킵 (실시간 캐시 없음)")
+            send_telegram(f"⚠️ <b>[황사장] {name}</b> 현재가 미수신 — 진입 스킵")
             return
 
         ok = tm.enter_position(code, name, price, condition=AUTO_TRADE_CONDITION)
