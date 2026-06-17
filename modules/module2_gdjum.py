@@ -370,6 +370,8 @@ class Module2Gdjum:
             condition=GDJUM_CONDITION,
             order_type="limit",
             limit_price=entry_p,
+            entry_amount=GDJUM_ENTRY_AMT,
+            add_buy=False,
         )
         if ok:
             s["order_sent"] = True

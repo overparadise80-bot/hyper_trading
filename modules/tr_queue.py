@@ -10,7 +10,7 @@ class KiwoomQueue:
         queue.push(lambda: kiwoom.dynamicCall(...))  # 요청 등록
         queue.done()                                  # 응답 수신 완료 (핸들러 안에서 호출)
     """
-    MIN_INTERVAL = 200   # ms: 요청 사이 최소 대기 시간
+    MIN_INTERVAL = 400   # ms: 요청 사이 최소 대기 시간
     WATCHDOG_MS  = 8000  # ms: 응답 미수신 시 강제 해제 (키움 레이트리밋/유실 대비)
 
     def __init__(self):

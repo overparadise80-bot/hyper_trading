@@ -86,11 +86,15 @@ def send_order_limit_buy(screen: str, code: str, qty: int, price: int) -> int:
 # =============================================================
 def enter_position(code: str, name: str, price: int,
                    condition: str, order_type: str = "market",
-                   limit_price: int = 0) -> bool:
+                   limit_price: int = 0,
+                   entry_amount: int = 0,
+                   add_buy: bool = True) -> bool:
     """
     포지션 진입
-    order_type: "market" or "limit"
-    limit_price: 지정가 진입 시 가격
+    order_type  : "market" or "limit"
+    limit_price : 지정가 진입 시 가격
+    entry_amount: 0이면 공통 ENTRY_AMOUNT 사용, 양수면 해당 금액 기준으로 수량 계산
+    add_buy     : False면 2차 추가매수 타이머를 등록하지 않음
     """
     if code in positions:
         return False
@@ -99,10 +103,11 @@ def enter_position(code: str, name: str, price: int,
     if not is_m2_open():
         return False
 
-    qty          = calc_qty(price)
+    base_amount  = entry_amount if entry_amount > 0 else ENTRY_AMOUNT
     is_high      = price > HIGH_PRICE_LIMIT
+    qty          = 1 if is_high else max(1, base_amount // price)
     noon_entry   = datetime.now().time() >= NOON_CUTOFF
-    entry_amount = price * qty
+    calc_amount  = price * qty
     screen       = next_screen()
 
     if order_type == "market":
@@ -111,7 +116,7 @@ def enter_position(code: str, name: str, price: int,
         if limit_price <= 0:
             limit_price = price
         send_order_limit_buy(screen, code, qty, limit_price)
-        entry_amount = limit_price * qty
+        calc_amount = limit_price * qty
 
     actual_price = limit_price if order_type == "limit" else price
 
@@ -121,7 +126,7 @@ def enter_position(code: str, name: str, price: int,
         "qty":           qty,
         "total_qty":     qty,
         "entry_time":    datetime.now(),
-        "entry_amount":  entry_amount,
+        "entry_amount":  calc_amount,
         "high_price":    actual_price,
         "stop_price":    actual_price * (1 + STOP_LOSS_RATE),
         "trail_active":  False,
@@ -135,7 +140,8 @@ def enter_position(code: str, name: str, price: int,
     }
 
     subscribe_realtime(code)
-    setup_add_timer(code)
+    if add_buy:
+        setup_add_timer(code)
     setup_exit_timer(code, noon_entry)
 
     return True

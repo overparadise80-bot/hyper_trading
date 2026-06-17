@@ -207,8 +207,8 @@ def on_condition_load():
 
     QTimer.singleShot(1500, mod3.setup_timer)
 
-    # 모듈4 시작 (테스트: 비활성화)
-    # QTimer.singleShot(2000, mod4.start)
+    # 모듈4 시작
+    QTimer.singleShot(2000, mod4.start)
 
     # 모듈5 시작 (장 시작 후 5초 뒤 첫 top100 조회)
     QTimer.singleShot(8000, mod5.start)
