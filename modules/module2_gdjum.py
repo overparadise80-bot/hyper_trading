@@ -73,6 +73,8 @@ class Module2Gdjum:
         print("  [전일고점] 모니터링 종료")
 
     def on_enter(self, code: str, now_str: str):
+        if not is_m2_open():
+            return
         if code in self.status:
             return
         if code in tm.positions or len(tm.positions) >= MAX_POSITIONS:
