@@ -101,17 +101,6 @@ class Module4Chalna:
         if rqname != "M4고가조회":
             return
         self._tr_handler = None
-        # ── 필드명 확인용 임시 덤프 (확인 후 삭제) ──────────────────
-        if self._h52_idx == 0:
-            for fname in ["250최고", "250최고가", "연중최고", "52주최고", "52주최고가"]:
-                try:
-                    v = self.kiwoom.dynamicCall(
-                        "GetCommData(QString,QString,int,QString)",
-                        trcode, rqname, 0, fname).strip()
-                    print(f"  [opt10001 필드확인] '{fname}' = '{v}'")
-                except Exception as e:
-                    print(f"  [opt10001 필드확인] '{fname}' 오류: {e}")
-        # ─────────────────────────────────────────────────────────────
         try:
             raw = self.kiwoom.dynamicCall(
                 "GetCommData(QString,QString,int,QString)",

@@ -2,8 +2,8 @@
 """
 module2_gdjum.py - 단타검색식전일고점돌파 자동매매 (B안: CommRqData 폴링)
 - SetRealReg 없음 — 호가 감시를 opt10004 CommRqData 5초 폴링으로 대체
-- 모의투자 계좌(ACCOUNT_NUM)로 지정가 매수 실행
-- 편입 → 일봉조회(opt10081, 전일고가) → 호가폴링(opt10004) + 거래량조회(opt10080) → 진입
+- 편입 → 일봉조회(opt10081, 전일고가) → 호가폴링(opt10004) + 거래량조회(opt10080)
+  → 필터 통과 후 7분 미이탈 → 1차 현재가 시장가 25만원 + 2차 전일고가 지정가 25만원
 """
 
 import os
@@ -12,15 +12,17 @@ from collections import deque
 from datetime import datetime
 from PyQt5.QtCore import QTimer
 from modules.common import (
-    send_telegram, GDJUM_CONDITION, GDJUM_TICK_DOWN, GDJUM_RISE_SKIP,
+    send_telegram, GDJUM_CONDITION,
     GDJUM_VOL_MULT, GDJUM_CANDLE_N, MAX_POSITIONS, is_m2_open,
     get_tick_size
 )
 from modules import trade_manager as tm
 
 GDJUM_TICK_MIN   = 2e7     # 호가잔량 최소 2천만원
-GDJUM_ENTRY_AMT  = 500_000 # 1회 진입금액 50만원
-MAX_WAIT_MIN     = 120      # 편입 후 최대 대기 (분)
+ENTRY_1ST_AMT    = 250_000  # 1차 진입금액 (현재가 시장가)
+ENTRY_2ND_AMT    = 250_000  # 2차 진입금액 (전일고가 지정가)
+ENTRY_HOLD_MIN   = 7        # 필터 통과 후 이탈 없으면 진입 (분)
+MAX_WAIT_MIN     = 120      # 필터 통과 전 최대 대기 (분)
 HOGA_POLL_MS     = 5_000    # 호가 폴링 주기
 NO_ENTRY_MINUTES = 10       # 무편입 알림 기준 (분)
 HOGA_SCREEN_BASE = 620      # 호가 폴링 전용 스크린번호 범위 시작
@@ -85,16 +87,16 @@ class Module2Gdjum:
         hoga_screen = self._alloc_hoga_screen()
 
         self.status[code] = {
-            "name":        name,
-            "prev_high":   0,
-            "tick_size":   0,
-            "entry_price": 0,
-            "max_price":   0,
-            "hoga_ok":     False,
-            "vol_ok":      False,
-            "order_sent":  False,
-            "enter_time":  datetime.now(),
-            "hoga_screen": hoga_screen,
+            "name":          name,
+            "prev_high":     0,
+            "tick_size":     0,
+            "hoga_ok":       False,
+            "vol_ok":        False,
+            "timer_started": False,
+            "entry_timer":   None,
+            "order_sent":    False,
+            "enter_time":    datetime.now(),
+            "hoga_screen":   hoga_screen,
         }
         self.history.append({"time": now_str, "name": name, "action": "편입"})
         self._reset_no_entry_timer()
@@ -117,8 +119,9 @@ class Module2Gdjum:
         name = s["name"] if s else code
         self.history.append({"time": now_str, "name": name, "action": "이탈"})
         if s:
+            if s.get("entry_timer"):
+                s["entry_timer"].stop()
             self._hoga_screen_map.pop(s["hoga_screen"], None)
-            # 주문이 나간 종목만 이탈 알림 (포지션 추적 필요)
             if s["order_sent"]:
                 send_telegram(
                     f"📤 <b>[전일고점돌파] 이탈</b>\n"
@@ -171,17 +174,14 @@ class Module2Gdjum:
             self.status.pop(code, None)
             return
 
-        tick    = get_tick_size(prev_high)
-        entry_p = prev_high - tick * GDJUM_TICK_DOWN
+        tick = get_tick_size(prev_high)
 
-        s["prev_high"]   = prev_high
-        s["tick_size"]   = tick
-        s["entry_price"] = entry_p
-        s["max_price"]   = price
+        s["prev_high"] = prev_high
+        s["tick_size"] = tick
 
         # 호가 스크린 등록 (폴링 타이머가 다음 주기에 바로 사용)
         self._hoga_screen_map[s["hoga_screen"]] = code
-        print(f"  [전일고점] {name} 전일고가:{prev_high:,} 진입예정:{entry_p:,}")
+        print(f"  [전일고점] {name} 전일고가:{prev_high:,}")
 
         # 편입 직후 거래량 1회 조회
         self._enqueue_vol(code)
@@ -192,7 +192,7 @@ class Module2Gdjum:
     def _enqueue_hoga_polls(self):
         """감시 중인 모든 코드의 opt10004 요청을 큐에 등록"""
         for code, s in list(self.status.items()):
-            if s["order_sent"] or s["prev_high"] == 0:
+            if s["order_sent"] or s["prev_high"] == 0 or s["timer_started"]:
                 continue
             if self._is_expired(code):
                 self._handle_expired(code)
@@ -211,7 +211,7 @@ class Module2Gdjum:
         if code not in self.status:
             return
         s = self.status[code]
-        if s["hoga_ok"] or s["order_sent"]:
+        if s["hoga_ok"] or s["order_sent"] or s["timer_started"]:
             return
 
         prev_high = s["prev_high"]
@@ -321,65 +321,84 @@ class Module2Gdjum:
             s["vol_ok"] = False
 
     # =========================================================
-    # 진입 시도
+    # 필터 통과 → 7분 타이머 시작
     # =========================================================
     def _try_enter(self, code: str):
         if code not in self.status:
             return
         s = self.status[code]
-        if s["order_sent"] or not (s["hoga_ok"] and s["vol_ok"]):
+        if s["order_sent"] or s["timer_started"] or not (s["hoga_ok"] and s["vol_ok"]):
             return
         if self._is_expired(code):
             self._handle_expired(code)
             return
 
-        entry_p   = s["entry_price"]
-        max_price = s["max_price"]
+        s["timer_started"] = True
+        t = QTimer()
+        t.setSingleShot(True)
+        t.timeout.connect(lambda c=code: self._check_entry(c))
+        t.start(ENTRY_HOLD_MIN * 60 * 1000)
+        s["entry_timer"] = t
 
-        # 8% 이상 상승 후 눌림 스킵
-        if entry_p > 0 and (max_price - entry_p) / entry_p >= GDJUM_RISE_SKIP:
-            send_telegram(
-                f"⚠️ <b>[전일고점돌파] 진입 스킵</b>\n"
-                f"• {s['name']}\n"
-                f"  사유: 8% 이상 상승 후 눌림 (최고가 {max_price:,}원)"
-            )
-            self.status.pop(code, None)
+        elapsed = int((datetime.now() - s["enter_time"]).total_seconds() / 60)
+        print(f"  [전일고점] {s['name']} 필터 통과 → {ENTRY_HOLD_MIN}분 대기 시작 (편입 {elapsed}분 경과)")
+
+    # =========================================================
+    # 7분 미이탈 확인 → 1차 시장가 + 2차 전일고가 지정가
+    # =========================================================
+    def _check_entry(self, code: str):
+        if code not in self.status:
+            return   # 7분 안에 조건식 이탈 — 진입 안 함
+        s = self.status[code]
+        if s["order_sent"]:
+            return
+        name      = s["name"]
+        prev_high = s["prev_high"]
+
+        current_price = tm.kiwoom_realtime_cache.get(code, 0)
+        if current_price <= 0:
+            print(f"  [전일고점] {name} 현재가 미수신 — 진입 스킵")
+            send_telegram(f"⚠️ <b>[전일고점돌파] {name}</b> 현재가 미수신 — 진입 스킵")
             return
 
         if code in tm.positions or len(tm.positions) >= MAX_POSITIONS:
-            print(f"  [전일고점] {s['name']} 포지션 한도 초과 — 스킵")
+            print(f"  [전일고점] {name} 포지션 한도 초과 — 스킵")
             return
         if not is_m2_open():
             print(f"  [전일고점] 장외 시간 — 주문 스킵")
             return
 
-        elapsed_min = int(
-            (datetime.now() - s["enter_time"]).total_seconds() / 60)
-        qty = max(1, GDJUM_ENTRY_AMT // entry_p)
+        qty1 = max(1, ENTRY_1ST_AMT // current_price)
+        qty2 = max(1, ENTRY_2ND_AMT // prev_high)
 
-        # ★ 두 조건 모두 충족 — 이 시점이 첫 텔레그램 알림
-        send_telegram(
-            f"🎯 <b>[전일고점돌파] 조건 충족! 주문 진입</b>\n"
-            f"• <b>{s['name']}</b>\n"
-            f"  전일고가: {s['prev_high']:,}원\n"
-            f"  진입가: {entry_p:,}원 (-{GDJUM_TICK_DOWN}틱)\n"
-            f"  수량: {qty}주  금액: {entry_p * qty:,}원\n"
-            f"  편입 후 경과: {elapsed_min}분 | 모의투자"
-        )
-
+        # 1차: 현재가 시장가
         ok = tm.enter_position(
-            code, s["name"], entry_p,
+            code, name, current_price,
             condition=GDJUM_CONDITION,
-            order_type="limit",
-            limit_price=entry_p,
-            entry_amount=GDJUM_ENTRY_AMT,
+            order_type="market",
+            entry_amount=ENTRY_1ST_AMT,
             add_buy=False,
         )
-        if ok:
-            s["order_sent"] = True
-            print(f"  [전일고점] 주문 전송: {s['name']} {qty}주 @ {entry_p:,}")
-        else:
-            print(f"  [전일고점] 주문 실패: {s['name']} (포지션 한도 또는 장외)")
+        if not ok:
+            print(f"  [전일고점] {name} 1차 진입 실패")
+            return
+
+        # 자동 추매 타이머 방지 (2차는 직접 관리)
+        if code in tm.positions:
+            tm.positions[code]["add_bought"] = True
+
+        # 2차: 전일고가 지정가
+        screen2 = tm.next_screen()
+        tm.send_order_limit_buy(screen2, code, qty2, prev_high)
+
+        s["order_sent"] = True
+        send_telegram(
+            f"🎯 <b>[전일고점돌파] {ENTRY_HOLD_MIN}분 미이탈 — 진입</b>\n"
+            f"• <b>{name}</b>\n"
+            f"  1차: 현재가 {current_price:,}원  {qty1}주  ({current_price * qty1:,}원)\n"
+            f"  2차: 전일고가 {prev_high:,}원 지정가  {qty2}주 대기"
+        )
+        print(f"  [전일고점] 진입 — 1차 시장가 {qty1}주, 2차 지정가 {qty2}주 @ {prev_high:,}")
 
     # =========================================================
     # 만료 처리
@@ -395,13 +414,12 @@ class Module2Gdjum:
         if not s:
             return
         self._hoga_screen_map.pop(s["hoga_screen"], None)
-        print(f"  [전일고점] {s['name']} 2시간 초과 → 진입 포기")
-        # 두 조건을 모두 충족했던 종목만 알림 (그 외는 조용히 종료)
+        print(f"  [전일고점] {s['name']} 2시간 초과 → 필터 미통과 포기")
         if s["hoga_ok"] and s["vol_ok"]:
             send_telegram(
                 f"⏰ <b>[전일고점돌파] 진입 포기</b>\n"
                 f"• {s['name']}\n"
-                f"  사유: 2시간 내 주문 미체결"
+                f"  사유: 2시간 내 필터 미통과"
             )
 
     # =========================================================

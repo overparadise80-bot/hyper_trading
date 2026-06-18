@@ -183,7 +183,7 @@ def check_add_buy(code: str):
         send_telegram(
             f"<b>2차 추가매수!</b>\n"
             f"• {pos['name']}  {add_qty}주  시장가\n"
-            f"  현재가 {current_price:,}원  ({rate:+.2f}%)\n"
+            f"  현재가 {current_price:,}원  ({rate:+.2%})\n"
             f"  평균단가: {pos['entry_price']:,}원\n"
             f"  총 {pos['total_qty']}주 / {pos['entry_amount']:,}원"
         )

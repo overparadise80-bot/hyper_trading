@@ -278,6 +278,10 @@ _condition_poll_timer = None
 def refresh_sector_realtime():
     """모듈1 스캔 완료 후 주도주 종목 실시간 체결 구독 교체"""
     global _subscribed_codes
+
+
+
+    
     if not mod1 or not mod1.theme_ranking:
         return
 
