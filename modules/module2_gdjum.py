@@ -90,13 +90,14 @@ class Module2Gdjum:
             "name":          name,
             "prev_high":     0,
             "tick_size":     0,
-            "hoga_ok":       False,
+            "hoga_ok":       True,   # 호가 조건 비활성화
             "vol_ok":        False,
             "timer_started": False,
             "entry_timer":   None,
             "order_sent":    False,
             "enter_time":    datetime.now(),
             "hoga_screen":   hoga_screen,
+            "max_price":     0,
         }
         self.history.append({"time": now_str, "name": name, "action": "편입"})
         self._reset_no_entry_timer()
@@ -178,6 +179,7 @@ class Module2Gdjum:
 
         s["prev_high"] = prev_high
         s["tick_size"] = tick
+        s["price"]     = price   # 즉시 진입용 현재가 백업 (실시간 캐시 미수신 대비)
 
         # 호가 스크린 등록 (폴링 타이머가 다음 주기에 바로 사용)
         self._hoga_screen_map[s["hoga_screen"]] = code
@@ -192,7 +194,7 @@ class Module2Gdjum:
     def _enqueue_hoga_polls(self):
         """감시 중인 모든 코드의 opt10004 요청을 큐에 등록"""
         for code, s in list(self.status.items()):
-            if s["order_sent"] or s["prev_high"] == 0 or s["timer_started"]:
+            if s["order_sent"] or s["prev_high"] == 0 or s["timer_started"] or s["hoga_ok"]:
                 continue
             if self._is_expired(code):
                 self._handle_expired(code)
@@ -334,14 +336,9 @@ class Module2Gdjum:
             return
 
         s["timer_started"] = True
-        t = QTimer()
-        t.setSingleShot(True)
-        t.timeout.connect(lambda c=code: self._check_entry(c))
-        t.start(ENTRY_HOLD_MIN * 60 * 1000)
-        s["entry_timer"] = t
-
         elapsed = int((datetime.now() - s["enter_time"]).total_seconds() / 60)
-        print(f"  [전일고점] {s['name']} 필터 통과 → {ENTRY_HOLD_MIN}분 대기 시작 (편입 {elapsed}분 경과)")
+        print(f"  [전일고점] {s['name']} 거래량 조건 통과 → 즉시 진입 시도 (편입 {elapsed}분 경과)")
+        QTimer.singleShot(0, lambda c=code: self._check_entry(c))
 
     # =========================================================
     # 7분 미이탈 확인 → 1차 시장가 + 2차 전일고가 지정가
@@ -355,7 +352,7 @@ class Module2Gdjum:
         name      = s["name"]
         prev_high = s["prev_high"]
 
-        current_price = tm.kiwoom_realtime_cache.get(code, 0)
+        current_price = tm.kiwoom_realtime_cache.get(code, 0) or s.get("price", 0)
         if current_price <= 0:
             print(f"  [전일고점] {name} 현재가 미수신 — 진입 스킵")
             send_telegram(f"⚠️ <b>[전일고점돌파] {name}</b> 현재가 미수신 — 진입 스킵")
@@ -369,9 +366,7 @@ class Module2Gdjum:
             return
 
         qty1 = max(1, ENTRY_1ST_AMT // current_price)
-        qty2 = max(1, ENTRY_2ND_AMT // prev_high)
 
-        # 1차: 현재가 시장가
         ok = tm.enter_position(
             code, name, current_price,
             condition=GDJUM_CONDITION,
@@ -380,25 +375,16 @@ class Module2Gdjum:
             add_buy=False,
         )
         if not ok:
-            print(f"  [전일고점] {name} 1차 진입 실패")
+            print(f"  [전일고점] {name} 진입 실패")
             return
-
-        # 자동 추매 타이머 방지 (2차는 직접 관리)
-        if code in tm.positions:
-            tm.positions[code]["add_bought"] = True
-
-        # 2차: 전일고가 지정가
-        screen2 = tm.next_screen()
-        tm.send_order_limit_buy(screen2, code, qty2, prev_high)
 
         s["order_sent"] = True
         send_telegram(
-            f"🎯 <b>[전일고점돌파] {ENTRY_HOLD_MIN}분 미이탈 — 진입</b>\n"
+            f"🎯 <b>[전일고점돌파] 거래량 조건 통과 — 즉시 진입</b>\n"
             f"• <b>{name}</b>\n"
-            f"  1차: 현재가 {current_price:,}원  {qty1}주  ({current_price * qty1:,}원)\n"
-            f"  2차: 전일고가 {prev_high:,}원 지정가  {qty2}주 대기"
+            f"  현재가 {current_price:,}원  {qty1}주  ({current_price * qty1:,}원)"
         )
-        print(f"  [전일고점] 진입 — 1차 시장가 {qty1}주, 2차 지정가 {qty2}주 @ {prev_high:,}")
+        print(f"  [전일고점] 진입 — 시장가 {qty1}주 @ {current_price:,}")
 
     # =========================================================
     # 만료 처리

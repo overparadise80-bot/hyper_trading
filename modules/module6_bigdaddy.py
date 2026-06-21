@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-big_combo.py - 모듈5: 빅이벤트 갭 콤보 매매
+module6_bigdaddy.py - 모듈6: 빅이벤트 갭 콤보 매매
 대상: 주식선물 보유 종목 (238개)
 조건:
   1. 갭상승 3% 이상 OR 시가=저가 (가산점 부여)
@@ -35,7 +35,7 @@ BC_ADD_AMOUNT    = 500000            # 2차 추가 50만원
 BC_ADD_RATE      = -0.02             # 2차 추가 조건: -2% 눌림
 BC_ADD_MINUTES   = 30                # 2차 추가 대기 시간
 BC_PROG_MIN_QTY  = 30000            # 프로그램 순매수 최소 3만주
-BC_CANDLE_MIN    = 4                 # 3분봉 연속 양봉 최소 4캔들
+BC_CANDLE_MIN    = 3                 # 3분봉 연속 양봉 최소 3캔들
 BC_GAP_RATE      = 0.03             # 갭상승 기준 3%
 BC_VOL_RATIO     = 0.70             # 60일 평균 거래량 대비 70%
 BC_VOL_DAYS      = 60               # 거래량 평균 기준 일수
@@ -109,7 +109,7 @@ FUTURES_STOCKS = [
 # =============================================================
 # 클래스
 # =============================================================
-class Module5BigCombo:
+class Module6BigDaddy:
 
     def __init__(self, kiwoom):
         self.kiwoom       = kiwoom
@@ -143,14 +143,14 @@ class Module5BigCombo:
     def start(self):
         """condition_kiwoom_v2에서 초기화 후 호출"""
         # 종목 코드 조회 (종목명→코드 매핑)
-        print("[모듈5] BigCombo 시작 - 종목코드 매핑 중...")
+        print("[모듈6] BigDaddy 시작 - 종목코드 매핑 중...")
         self._build_code_map()
 
         # 5분 스캔 타이머
         self._scan_timer = QTimer()
         self._scan_timer.timeout.connect(self._on_scan_timer)
         self._scan_timer.start(BC_SCAN_INTERVAL)
-        print(f"[모듈5] 5분 스캔 타이머 시작 (09:00~11:00)")
+        print(f"[모듈6] 5분 스캔 타이머 시작 (09:00~11:00)")
 
         # 즉시 1회 실행
         QTimer.singleShot(3000, self._on_scan_timer)
@@ -169,9 +169,9 @@ class Module5BigCombo:
                 if name in FUTURES_STOCKS:
                     self.name_to_code[name] = code
             self.scan_codes = list(self.name_to_code.values())
-            print(f"[모듈5] 종목코드 매핑 완료: {len(self.scan_codes)}개")
+            print(f"[모듈6] 종목코드 매핑 완료: {len(self.scan_codes)}개")
         except Exception as e:
-            print(f"[모듈5] 코드 매핑 오류: {e}")
+            print(f"[모듈6] 코드 매핑 오류: {e}")
 
     # ==========================================================
     # 타이머 → 스캔
@@ -180,10 +180,10 @@ class Module5BigCombo:
         if not self._is_open():
             return
         if not self.scan_codes:
-            print("[모듈5] 종목코드 없음 - 재매핑 시도")
+            print("[모듈6] 종목코드 없음 - 재매핑 시도")
             self._build_code_map()
             return
-        print(f"\n[모듈5] {datetime.now().strftime('%H:%M')} 스캔 시작 ({len(self.scan_codes)}종목)")
+        print(f"\n[모듈6] {datetime.now().strftime('%H:%M')} 스캔 시작 ({len(self.scan_codes)}종목)")
         self.candidates = {}
         self._tr_handler = self._on_tr_basic
         QTimer.singleShot(500, lambda: self._scan_basic(0))
@@ -293,7 +293,7 @@ class Module5BigCombo:
     # PHASE1 완료 → 거래량 조회
     # ==========================================================
     def _phase1_done(self):
-        print(f"[모듈5] PHASE1 완료. 후보: {len(self.candidates)}개 → 거래량 조회")
+        print(f"[모듈6] PHASE1 완료. 후보: {len(self.candidates)}개 → 거래량 조회")
         if not self.candidates:
             return
         self.vol_queue = list(self.candidates.keys())
@@ -352,7 +352,7 @@ class Module5BigCombo:
         self.candidates = {
             c: d for c, d in self.candidates.items() if d["vol_ok"]
         }
-        print(f"[모듈5] PHASE2 완료. 거래량 통과: {len(self.candidates)}개 → 3분봉 조회")
+        print(f"[모듈6] PHASE2 완료. 거래량 통과: {len(self.candidates)}개 → 3분봉 조회")
         if not self.candidates:
             return
         self.candle_queue = list(self.candidates.keys())
@@ -420,7 +420,7 @@ class Module5BigCombo:
         self.candidates = {
             c: d for c, d in self.candidates.items() if d["candle_ok"]
         }
-        print(f"[모듈5] PHASE3 완료. 3분봉 통과: {len(self.candidates)}개 → 프로그램 매매 조회")
+        print(f"[모듈6] PHASE3 완료. 3분봉 통과: {len(self.candidates)}개 → 프로그램 매매 조회")
         if not self.candidates:
             return
         self.prog_queue = list(self.candidates.keys())
@@ -479,7 +479,7 @@ class Module5BigCombo:
         self.candidates = {
             c: d for c, d in self.candidates.items() if d["prog_ok"]
         }
-        print(f"[모듈5] PHASE4 완료. 프로그램 통과: {len(self.candidates)}개 → 뉴스 판별")
+        print(f"[모듈6] PHASE4 완료. 프로그램 통과: {len(self.candidates)}개 → 뉴스 판별")
         if not self.candidates:
             return
         # 뉴스 판별 (Gemini) → 순차 처리
@@ -559,9 +559,9 @@ class Module5BigCombo:
         final = dict(sorted(final.items(),
                             key=lambda x: x[1]["total_score"], reverse=True))
 
-        print(f"[모듈5] PHASE5 완료. 최종 후보: {len(final)}개")
+        print(f"[모듈6] PHASE5 완료. 최종 후보: {len(final)}개")
         if not final:
-            send_telegram("[모듈5] 빅콤보 - 오늘은 해당 종목 없음")
+            send_telegram("[모듈6] 빅콤보 - 오늘은 해당 종목 없음")
             return
 
         # 이미 진입한 종목 제외
@@ -581,7 +581,7 @@ class Module5BigCombo:
         remaining = BC_MAX_POSITIONS - len(
             [s for s in self.status.values() if s.get("entered")])
         if remaining <= 0:
-            send_telegram("[모듈5] 최대 보유 종목 도달 - 진입 스킵")
+            send_telegram("[모듈6] 최대 보유 종목 도달 - 진입 스킵")
             return
 
         entered_count = 0
@@ -605,7 +605,8 @@ class Module5BigCombo:
             condition="빅콤보",
             order_type="market",
             limit_price=0,
-            entry_amount=BC_ENTRY_AMOUNT
+            entry_amount=BC_ENTRY_AMOUNT,
+            add_buy=False,   # 추매는 모듈6가 직접 관리
         )
 
         if ok:
@@ -648,27 +649,29 @@ class Module5BigCombo:
 
     # ==========================================================
     # 실시간 체결가 수신 (on_realtime에서 호출)
+    # 손절/트레일링은 trade_manager.on_realtime_price가 처리
+    # 여기서는 max_price 갱신 + trade_manager 청산 시 status 동기화만 담당
     # ==========================================================
     def on_realtime(self, code: str, real_type: str):
         if code not in self.status:
             return
         if real_type != "주식체결":
             return
+
+        # trade_manager가 이미 청산한 경우 status 정리
+        if code not in tm.positions:
+            self.status.pop(code, None)
+            return
+
         try:
             price_str = self.kiwoom.dynamicCall(
                 "GetCommRealData(QString, int)", real_type, 10)
             price = abs(int(price_str.strip()))
+            s = self.status[code]
+            if price > s["max_price"]:
+                s["max_price"] = price
         except:
-            return
-
-        s = self.status[code]
-        if price > s["max_price"]:
-            s["max_price"] = price
-
-        # 손절 체크 (-2.5%)
-        entry = s["entry_price"]
-        if price <= entry * (1 + STOP_LOSS_RATE):
-            self._exit_position(code, price, "손절")
+            pass
 
     # ==========================================================
     # 2차 추매 체크 (30분 후)
@@ -709,25 +712,31 @@ class Module5BigCombo:
         if s["add_done"]:
             send_telegram(f"[빅콤보] {name} 이미 추매 완료")
             return
+        if code not in tm.positions:
+            send_telegram(f"[빅콤보] {name} 포지션 없음")
+            return
 
         current = tm.kiwoom_realtime_cache.get(code, s["entry_price"])
         qty     = max(1, BC_ADD_AMOUNT // current)
+        screen  = tm.next_screen()
+        tm.send_order_market_buy(screen, code, qty)
 
-        ok = tm.enter_position(
-            code, name, current,
-            condition="빅콤보추매",
-            order_type="market",
-            limit_price=0,
-            entry_amount=BC_ADD_AMOUNT
+        # trade_manager positions 평균단가/총수량 갱신
+        pos = tm.positions[code]
+        pos["total_qty"]    += qty
+        pos["entry_amount"] += current * qty
+        pos["entry_price"]   = pos["entry_amount"] // pos["total_qty"]
+        pos["stop_price"]    = pos["entry_price"] * (1 + STOP_LOSS_RATE)
+        pos["add_bought"]    = True
+
+        s["add_done"] = True
+        send_telegram(
+            f"<b>✅ [빅콤보] 추매 완료!</b>\n"
+            f"• {name}\n"
+            f"  추매가: {current:,}원  수량: {qty}주\n"
+            f"  평균단가: {pos['entry_price']:,}원\n"
+            f"  총 {pos['total_qty']}주 / {pos['entry_amount']:,}원"
         )
-        if ok:
-            s["add_done"] = True
-            send_telegram(
-                f"<b>✅ [빅콤보] 추매 완료!</b>\n"
-                f"• {name}\n"
-                f"  추매가: {current:,}원  수량: {qty}주\n"
-                f"  추매금액: {BC_ADD_AMOUNT:,}원"
-            )
 
     # ==========================================================
     # 청산
@@ -741,7 +750,7 @@ class Module5BigCombo:
         rate = (price - entry) / entry * 100
         elapsed = int((datetime.now() - s["entry_time"]).total_seconds() / 60)
 
-        tm.exit_position(code, name, reason="빅콤보_" + reason)
+        tm.exit_position(code, reason="빅콤보_" + reason)
         send_telegram(
             f"<b>[빅콤보] 청산 - {reason}</b>\n"
             f"• {name}\n"
@@ -756,7 +765,7 @@ class Module5BigCombo:
         target = now_dt.replace(hour=14, minute=50, second=0, microsecond=0)
         diff_ms = max(0, int((target - now_dt).total_seconds() * 1000))
         QTimer.singleShot(diff_ms, self._force_exit_all)
-        print(f"[모듈5] 14:50 일괄청산 타이머 설정")
+        print(f"[모듈6] 14:50 일괄청산 타이머 설정")
 
     def _force_exit_all(self):
         if not self.status:

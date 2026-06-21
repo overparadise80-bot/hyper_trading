@@ -12,9 +12,10 @@ module1_sector.py v3 - 주도섹터 + 52주신고가 브리핑
 import json
 import os
 import requests as req
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime
 from PyQt5.QtCore import QTimer
 from modules.common import *
+from modules.sheets_writer import setup_sheets_timer
 from screenshot_sender import send_screenshot_to_telegram
 
 with open("theme_map_v2.json", "r", encoding="utf-8") as f:
@@ -553,7 +554,7 @@ body{{font-family:'Malgun Gothic',sans-serif;background:#dceefb;padding:6px;}}
 .card{{background:#f0f7ff;border:1px solid #b5d4f4;border-radius:8px;overflow:hidden;}}
 .card-head{{background:#185fa5;padding:7px 6px;display:flex;justify-content:space-between;align-items:center;}}
 .rank-badge{{background:#0c447c;color:#b5d4f4;font-size:14px;font-weight:500;padding:2px 4px;border-radius:4px;margin-right:3px;}}
-.sector-name{{color:#e6f1fb;font-size:19px;font-weight:700;}}
+.sector-name{{color:#e6f1fb;font-s0ize:19px;font-weight:700;}}
 .sector-rate{{font-size:17px;font-weight:700;padding:3px 5px;border-radius:4px;background:#dceefb;min-width:50px;text-align:center;}}
 .up-bar{{display:none;}}
 .card-body{{padding:4px 3px;}}

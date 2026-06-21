@@ -53,6 +53,8 @@ from modules.module2_gdjum   import Module2Gdjum
 from modules.module3_closing  import Module3Closing
 from modules.module4_chalna   import Module4Chalna
 from modules.module5_sonsugun import Module5Sonsugun
+from modules.module6_bigdaddy import Module6BigDaddy
+from modules.sheets_writer   import setup_sheets_timer
 from modules.common          import (
     send_telegram, M1_INTERVAL, M1_START, M1_END,
     M2_START, M2_END, AUTO_TRADE_CONDITION, GDJUM_CONDITION,
@@ -77,6 +79,7 @@ mod2_gj = None
 mod3    = None
 mod4    = None
 mod5    = None
+mod6    = None
 
 # =============================================================
 # 전역 타이머
@@ -158,7 +161,7 @@ def on_login(err_code: int):
 # 조건식 로드 완료
 # =============================================================
 def on_condition_load():
-    global mod1, mod2_hw, mod2_gj, mod3, mod4, mod5, _condition_ok
+    global mod1, mod2_hw, mod2_gj, mod3, mod4, mod5, mod6, _condition_ok
     condition_timeout_timer.stop()   # ★ 타임아웃 감시 해제
     _condition_ok = True
 
@@ -190,6 +193,7 @@ def on_condition_load():
     mod3    = Module3Closing(kiwoom, condition_list)
     mod4    = Module4Chalna(kiwoom)
     mod5    = Module5Sonsugun(kiwoom, queue, mod1)
+    mod6    = Module6BigDaddy(kiwoom)
 
     mod1.set_condition_list(condition_list)
     mod1.set_sonsugun(mod5)
@@ -205,6 +209,9 @@ def on_condition_load():
     # 14:50 일괄청산
     tm.setup_force_exit_timer()
 
+    # 15:45 구글 시트 자동 기록
+    setup_sheets_timer(lambda: mod1.theme_ranking)
+
     QTimer.singleShot(1500, mod3.setup_timer)
 
     # 모듈4 시작
@@ -212,6 +219,10 @@ def on_condition_load():
 
     # 모듈5 시작 (장 시작 후 5초 뒤 첫 top100 조회)
     QTimer.singleShot(8000, mod5.start)
+
+    # 모듈6 시작 (09:00~11:00 빅이벤트 갭 콤보)
+    QTimer.singleShot(9000, mod6.start)
+    mod6.setup_force_exit()
 
     # 모듈1 초기 실행 → 완료 후 조건검색 등록 + 주도주 실시간 구독
     def _on_first_scan_done():
@@ -489,6 +500,9 @@ def on_realtime_data(code, real_type, real_data):
             pass
         # 트레일링/손절
         tm.on_realtime_price(code, real_type, kiwoom)
+        # 모듈6 손절 체크
+        if mod6:
+            mod6.on_realtime(code, real_type)
         # UI용 추가 실시간 캐시 (거래대금·시가·고가·저가)
         try:
             def gd(fid): return kiwoom.dynamicCall("GetCommRealData(QString, int)", real_type, fid).strip()
