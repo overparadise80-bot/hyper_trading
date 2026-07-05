@@ -88,13 +88,15 @@ def enter_position(code: str, name: str, price: int,
                    condition: str, order_type: str = "market",
                    limit_price: int = 0,
                    entry_amount: int = 0,
-                   add_buy: bool = True) -> bool:
+                   add_buy: bool = True,
+                   stop_loss_rate: float = None) -> bool:
     """
     포지션 진입
-    order_type  : "market" or "limit"
-    limit_price : 지정가 진입 시 가격
-    entry_amount: 0이면 공통 ENTRY_AMOUNT 사용, 양수면 해당 금액 기준으로 수량 계산
-    add_buy     : False면 2차 추가매수 타이머를 등록하지 않음
+    order_type     : "market" or "limit"
+    limit_price    : 지정가 진입 시 가격
+    entry_amount   : 0이면 공통 ENTRY_AMOUNT 사용, 양수면 해당 금액 기준으로 수량 계산
+    add_buy        : False면 2차 추가매수 타이머를 등록하지 않음
+    stop_loss_rate : None이면 공통 STOP_LOSS_RATE 사용, 지정 시 해당 포지션에만 적용
     """
     if code in positions:
         return False
@@ -109,6 +111,7 @@ def enter_position(code: str, name: str, price: int,
     noon_entry   = datetime.now().time() >= NOON_CUTOFF
     calc_amount  = price * qty
     screen       = next_screen()
+    stop_rate    = stop_loss_rate if stop_loss_rate is not None else STOP_LOSS_RATE
 
     if order_type == "market":
         send_order_market_buy(screen, code, qty)
@@ -128,7 +131,8 @@ def enter_position(code: str, name: str, price: int,
         "entry_time":    datetime.now(),
         "entry_amount":  calc_amount,
         "high_price":    actual_price,
-        "stop_price":    actual_price * (1 + STOP_LOSS_RATE),
+        "stop_price":    actual_price * (1 + stop_rate),
+        "stop_loss_rate": stop_rate,
         "trail_active":  False,
         "add_bought":    False,
         "add_timer":     None,
@@ -178,7 +182,7 @@ def check_add_buy(code: str):
         pos["total_qty"]   += add_qty
         pos["entry_amount"] += current_price * add_qty
         pos["entry_price"]  = pos["entry_amount"] // pos["total_qty"]
-        pos["stop_price"]   = pos["entry_price"] * (1 + STOP_LOSS_RATE)
+        pos["stop_price"]   = pos["entry_price"] * (1 + pos["stop_loss_rate"])
 
         send_telegram(
             f"📉 <b>[{pos['condition']}] 눌림 추매</b>\n"
@@ -351,9 +355,9 @@ def on_chejan(gubun: str, kiwoom):
         if not pos.get("add_bought"):
             # 1차 매수 체결: 실체결가로 진입가 확정
             pos["entry_price"] = ep
-            pos["stop_price"]  = ep * (1 + STOP_LOSS_RATE)
+            pos["stop_price"]  = ep * (1 + pos["stop_loss_rate"])
             pos["high_price"]  = ep
         else:
             # 2차 추가매수 체결: check_add_buy에서 계산한 가중평균 유지, stop_price만 갱신
-            pos["stop_price"] = pos["entry_price"] * (1 + STOP_LOSS_RATE)
+            pos["stop_price"] = pos["entry_price"] * (1 + pos["stop_loss_rate"])
         print(f"  [체결확인] {name} 매수 {eq}주 @ {ep:,}원")

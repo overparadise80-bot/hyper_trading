@@ -106,6 +106,15 @@ FORCE_EXIT_ALL = time(14, 50)
 HOLD_MINUTES   = 90
 
 # =============================================================
+# 모듈7 3분200억거래대금 설정
+# =============================================================
+M7_START         = time(9, 5)
+M7_END           = time(14, 0)
+M7_CONDITION     = "3분200억거래대금"
+M7_SCREEN        = "0150"
+M7_STOP_LOSS_RATE = -0.02   # 모듈7 전용 손절 (공통 STOP_LOSS_RATE와 별도)
+
+# =============================================================
 # 텔레그램
 # =============================================================
 def send_telegram(msg: str):
@@ -142,6 +151,9 @@ def is_m2_open() -> bool:
 
 def is_m4_open() -> bool:
     return is_open(M4_START, M4_END)
+
+def is_m7_open() -> bool:
+    return is_open(M7_START, M7_END)
 
 def get_tick_size(price: int) -> int:
     if price < 1000:     return 1

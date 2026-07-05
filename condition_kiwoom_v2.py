@@ -54,10 +54,12 @@ from modules.module3_closing  import Module3Closing
 from modules.module4_chalna   import Module4Chalna
 from modules.module5_sonsugun import Module5Sonsugun
 from modules.module6_bigdaddy import Module6BigDaddy
+from modules.module7_3200     import Module7Scan3200
 from modules.sheets_writer   import setup_sheets_timer
 from modules.common          import (
     send_telegram, M1_INTERVAL, M1_START, M1_END,
     M2_START, M2_END, AUTO_TRADE_CONDITION, GDJUM_CONDITION,
+    M7_CONDITION, M7_SCREEN,
     is_m1_open, is_m2_open
 )
 
@@ -80,6 +82,7 @@ mod3    = None
 mod4    = None
 mod5    = None
 mod6    = None
+mod7    = None
 
 # =============================================================
 # 전역 타이머
@@ -161,7 +164,7 @@ def on_login(err_code: int):
 # 조건식 로드 완료
 # =============================================================
 def on_condition_load():
-    global mod1, mod2_hw, mod2_gj, mod3, mod4, mod5, mod6, _condition_ok
+    global mod1, mod2_hw, mod2_gj, mod3, mod4, mod5, mod6, mod7, _condition_ok
     condition_timeout_timer.stop()   # ★ 타임아웃 감시 해제
     _condition_ok = True
 
@@ -194,6 +197,7 @@ def on_condition_load():
     mod4    = Module4Chalna(kiwoom)
     mod5    = Module5Sonsugun(kiwoom, queue, mod1)
     mod6    = Module6BigDaddy(kiwoom)
+    mod7    = Module7Scan3200(kiwoom, queue)
 
     mod1.set_condition_list(condition_list)
     mod1.set_sonsugun(mod5)
@@ -282,8 +286,10 @@ _subscribed_codes = set()
 # 조건검색 폴링 상태 (is_realtime=0 방식)
 _hw_active_codes: set = set()
 _gj_active_codes: set = set()
+_m7_active_codes: set = set()
 _hw_initialized  = False   # 첫 폴링은 조용히 초기화만
 _gj_initialized  = False
+_m7_initialized  = False
 _condition_poll_timer = None
 
 def refresh_sector_realtime():
@@ -357,6 +363,7 @@ def _poll_conditions():
     """조건검색 폴링 1회 (is_realtime=0 — OCX 스택 오버런 방지)"""
     hw = AUTO_TRADE_CONDITION
     gj = GDJUM_CONDITION
+    m7 = M7_CONDITION
     if hw in condition_list:
         kiwoom.dynamicCall("SendConditionStop(QString,QString,int)",
                            "0211", hw, int(condition_list[hw]))
@@ -368,7 +375,14 @@ def _poll_conditions():
                                "0210", gj, int(condition_list[gj]))
             kiwoom.dynamicCall("SendCondition(QString,QString,int,int)",
                                "0210", gj, int(condition_list[gj]), 0)
+    def _poll_m7():
+        if m7 in condition_list:
+            kiwoom.dynamicCall("SendConditionStop(QString,QString,int)",
+                               M7_SCREEN, m7, int(condition_list[m7]))
+            kiwoom.dynamicCall("SendCondition(QString,QString,int,int)",
+                               M7_SCREEN, m7, int(condition_list[m7]), 0)
     QTimer.singleShot(300, _poll_gj)
+    QTimer.singleShot(600, _poll_m7)
 
 def register_realtime_conditions():
     global _condition_poll_timer
@@ -377,9 +391,10 @@ def register_realtime_conditions():
 
     mod2_hw.start_monitoring()
     mod2_gj.start_monitoring()
+    mod7.start_monitoring()
     send_telegram(
         "<b>[조건검색] 폴링 감시 시작 (30초 간격)</b>\n"
-        "• 황사장 | 전일고점돌파\n"
+        "• 황사장 | 전일고점돌파 | 3분200억\n"
         "편입 즉시 브리핑 | 10분 무편입 시 알림"
     )
 
@@ -415,6 +430,8 @@ def _stop_conditions():
         mod2_hw.stop_monitoring()
     if mod2_gj:
         mod2_gj.stop_monitoring()
+    if mod7:
+        mod7.stop_monitoring()
     print("  [조건검색] 15:30 폴링 종료 — 무편입 알림 중단")
 
 def _schedule_daily_summary():
@@ -433,12 +450,14 @@ def _send_daily_summary():
     header = f"<b>📋 조건검색 일일 이력 ({today})</b>\n{'─' * 20}"
     hw_text = mod2_hw.get_daily_summary() if mod2_hw else "황사장 데이터 없음"
     gj_text = mod2_gj.get_daily_summary() if mod2_gj else "전일고점 데이터 없음"
-    send_telegram(f"{header}\n\n{hw_text}\n\n{gj_text}")
+    m7_text = mod7.get_daily_summary() if mod7 else "3분200억 데이터 없음"
+    send_telegram(f"{header}\n\n{hw_text}\n\n{gj_text}\n\n{m7_text}")
     print("  [일일요약] 조건검색 이력 전송 완료")
 
 def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
     """폴링 결과 수신 — 이전 목록과 비교해 신규 편입/이탈만 처리"""
-    global _hw_active_codes, _gj_active_codes, _hw_initialized, _gj_initialized
+    global _hw_active_codes, _gj_active_codes, _m7_active_codes
+    global _hw_initialized, _gj_initialized, _m7_initialized
     codes = {c for c in code_list.split(";") if c.strip()}
     now_s = datetime.now().strftime("%H:%M")
 
@@ -472,6 +491,21 @@ def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
             mod2_gj.on_exit(code, now_s)
         if entered or exited:
             print(f"  [전일고점] +{len(entered)} -{len(exited)} (총 {len(codes)})")
+    elif condition_name == M7_CONDITION:
+        if not _m7_initialized:
+            _m7_active_codes = codes
+            _m7_initialized  = True
+            print(f"  [3분200억] 초기화: 기존 {len(codes)}개 무시 (신규 편입부터 알림)")
+            return
+        entered = codes - _m7_active_codes
+        exited  = _m7_active_codes - codes
+        _m7_active_codes = codes
+        for code in entered:
+            mod7.on_enter(code, now_s)
+        for code in exited:
+            mod7.on_exit(code, now_s)
+        if entered or exited:
+            print(f"  [3분200억] +{len(entered)} -{len(exited)} (총 {len(codes)})")
 
 def on_realtime_condition(code, condition_type, condition_name, index, next_cond):
     """미사용 — 폴링 모드로 전환됨 (on_initial_condition 처리)"""

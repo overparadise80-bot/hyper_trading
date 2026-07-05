@@ -3,7 +3,6 @@
 module3_closing.py - 종가베팅
 - 15:18 1회 스캔
 - 급등후조정반등 조건식 + 등락률 5% 미만 + 양봉 + 윗꼬리 필터
-- 기관 순매수 10거래일 중 5일 이상
 - 최대 5종목 종가 진입
 """
 
@@ -23,11 +22,7 @@ class Module3Closing:
         self.candidate_codes = []
         self.candidate_idx   = 0
         self.candidate_data  = {}
-        self.inst_queue      = []
-        self.inst_idx        = 0
-        self.inst_days_data  = {}
         self.final_list      = []
-        self._inst_watchdog  = None
 
     def setup_timer(self):
         now    = datetime.now()
@@ -138,78 +133,10 @@ class Module3Closing:
         if not passed:
             self._send_empty_briefing("기본 필터 통과 종목 없음\n(등락률 5%미만 + 양봉 + 윗꼬리 조건)")
             return
-        self.inst_queue = passed
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_inst)
-        except:
-            pass
-        self.kiwoom.OnReceiveTrData.connect(self._on_tr_inst)
-        QTimer.singleShot(300, lambda: self._scan_inst(0))
 
-    def _scan_inst(self, idx: int):
-        self.inst_idx = idx
-        if idx >= len(self.inst_queue):
-            self._inst_done()
-            return
-        code = self.inst_queue[idx]
-        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "금액수량구분", "1")
-        self.kiwoom.dynamicCall("SetInputValue(QString, QString)", "매매구분", "0")
-        self.kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)",
-                                "모듈3기관조회", "opt10059", 0, "0702")
-
-        if self._inst_watchdog:
-            self._inst_watchdog.stop()
-        self._inst_watchdog = QTimer()
-        self._inst_watchdog.setSingleShot(True)
-        self._inst_watchdog.timeout.connect(lambda: self._inst_timeout(idx))
-        self._inst_watchdog.start(5000)
-
-    def _inst_timeout(self, idx: int):
-        if self.inst_idx != idx:
-            return
-        code = self.inst_queue[idx]
-        name = self.candidate_data.get(code, {}).get("name", code)
-        print(f"  기관 {name}: TR 응답 없음 — 스킵 (days=0)")
-        self.inst_days_data[code] = 0
-        QTimer.singleShot(0, lambda: self._scan_inst(idx + 1))
-
-    def _on_tr_inst(self, screen, rqname, trcode, recordname, prev_next, *args):
-        if rqname != "모듈3기관조회":
-            return
-        if self._inst_watchdog:
-            self._inst_watchdog.stop()
-            self._inst_watchdog = None
-        code = self.inst_queue[self.inst_idx]
-        days = 0
-        for i in range(M3_INST_DAYS):
-            try:
-                v = int(self.kiwoom.dynamicCall(
-                    "GetCommData(QString,QString,int,QString)",
-                    trcode, rqname, i, "기관계").strip().replace(',','').replace('+',''))
-                if v > 0:
-                    days += 1
-            except:
-                break
-        self.inst_days_data[code] = days
-        print(f"  기관 {self.candidate_data[code]['name']}: {days}일")
-        QTimer.singleShot(300, lambda: self._scan_inst(self.inst_idx+1))
-
-    def _inst_done(self):
-        try:
-            self.kiwoom.OnReceiveTrData.disconnect(self._on_tr_inst)
-        except:
-            pass
-        passed = sorted(
-            [c for c in self.inst_queue if self.inst_days_data.get(c,0) >= M3_INST_MIN],
-            key=lambda c: self.candidate_data[c]["rate"]
+        self.final_list = sorted(
+            passed, key=lambda c: self.candidate_data[c]["rate"]
         )[:M3_MAX_STOCKS]
-
-        if not passed:
-            self._send_empty_briefing(f"기관 순매수 {M3_INST_MIN}일+ 조건 통과 종목 없음")
-            return
-
-        self.final_list = passed
         self._enter_all()
 
     def _send_empty_briefing(self, reason: str):
@@ -223,14 +150,13 @@ class Module3Closing:
 
     def _enter_all(self):
         now = datetime.now().strftime("%m/%d %H:%M")
-        msg = f"<b>종가베팅 진입</b> ({now})\n기관순매수 {M3_INST_MIN}일+\n--------------------\n\n"
+        msg = f"<b>종가베팅 진입</b> ({now})\n--------------------\n\n"
 
         for i, code in enumerate(self.final_list):
             d   = self.candidate_data[code]
             qty = calc_qty(d["price"])
             msg += (f"• <b>{d['name']}</b>\n"
-                    f"  {d['price']:,}원  {d['rate']:+.2f}%  {qty}주\n"
-                    f"  기관순매수 {self.inst_days_data[code]}일/{M3_INST_DAYS}거래일\n\n")
+                    f"  {d['price']:,}원  {d['rate']:+.2f}%  {qty}주\n\n")
             delay = i * 500
             c = code
             QTimer.singleShot(delay, lambda code=c: self._send_order(code))
