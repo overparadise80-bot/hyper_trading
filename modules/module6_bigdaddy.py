@@ -8,14 +8,11 @@ module6_bigdaddy.py - 모듈6: 빅이벤트 갭 콤보 매매
   3. 프로그램 순매수 3만주 이상
   4. 3분봉 연속 양봉 4캔들 이상
   5. 일봉 거래량 >= 60일 평균 거래량 × 70%
-  6. Gemini 뉴스 검색 → 빅이벤트 판별 후 자동 진입
 진입: 1차 100만원 시장가, 2차 30분내 -2% 눌림 시 50만원 (텔레그램 승인)
 청산: 손절 -2.5%, 14:50 일괄 청산
 스캔: 09:00 ~ 11:00
 """
 
-import os
-import requests
 from datetime import datetime, time
 from PyQt5.QtCore import QTimer
 from modules.common import (
@@ -42,12 +39,6 @@ BC_VOL_DAYS      = 60               # 거래량 평균 기준 일수
 BC_HIGH_MARGIN   = 0.02             # 전일고점 근접 기준 2% 이내
 BC_MAX_POSITIONS = 5                # 최대 동시 보유 종목
 BC_SCREEN_BASE   = "0700"           # 스크린 번호 베이스
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-)
 
 # =============================================================
 # 주식선물 대상 종목명 리스트
@@ -111,8 +102,9 @@ FUTURES_STOCKS = [
 # =============================================================
 class Module6BigDaddy:
 
-    def __init__(self, kiwoom):
+    def __init__(self, kiwoom, queue):
         self.kiwoom       = kiwoom
+        self.queue        = queue
         self.status       = {}   # {코드: 상태dict}
         self.name_to_code = {}   # {종목명: 종목코드} - 런타임 매핑
         self.scan_codes   = []   # 전체 종목코드 리스트
@@ -201,15 +193,19 @@ class Module6BigDaddy:
             self._phase1_done()
             return
         code = self.scan_codes[idx]
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "CommRqData(QString, QString, int, QString)",
-            "빅콤보기본조회", "opt10001", 0, "0710")
+
+        def _do(c=code):
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                "빅콤보기본조회", "opt10001", 0, "0710")
+        self.queue.push(_do)
 
     def _on_tr_basic(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "빅콤보기본조회":
             return
+        self.queue.done()
         code = self.scan_codes[self.scan_idx]
         k    = self.kiwoom
         try:
@@ -229,7 +225,7 @@ class Module6BigDaddy:
                                               trcode, rqname, 0, "최고가").strip()))
 
             if prev_close == 0 or open_p == 0:
-                QTimer.singleShot(100, lambda: self._scan_basic(self.scan_idx + 1))
+                self._scan_basic(self.scan_idx + 1)
                 return
 
             # ── 갭 계산
@@ -238,7 +234,7 @@ class Module6BigDaddy:
             gap_ok      = gap_rate >= BC_GAP_RATE or is_sijeo
 
             if not gap_ok:
-                QTimer.singleShot(100, lambda: self._scan_basic(self.scan_idx + 1))
+                self._scan_basic(self.scan_idx + 1)
                 return
 
             # ── 전일고점 근접/돌파 OR 52주신고가 근접
@@ -247,7 +243,7 @@ class Module6BigDaddy:
             pos_ok = near_prev_high or near_52w_high
 
             if not pos_ok:
-                QTimer.singleShot(100, lambda: self._scan_basic(self.scan_idx + 1))
+                self._scan_basic(self.scan_idx + 1)
                 return
 
             # ── 가산점 계산
@@ -276,8 +272,6 @@ class Module6BigDaddy:
                 "candle_ok":  False,
                 "prog_ok":    False,
                 "prog_qty":   0,
-                "news_ok":    False,
-                "news_summary": "",
             }
             print(f"  [빅콤보] 갭/위치 통과: {name} "
                   f"갭{gap_rate*100:+.1f}% "
@@ -287,7 +281,7 @@ class Module6BigDaddy:
         except Exception as e:
             pass
 
-        QTimer.singleShot(150, lambda: self._scan_basic(self.scan_idx + 1))
+        self._scan_basic(self.scan_idx + 1)
 
     # ==========================================================
     # PHASE1 완료 → 거래량 조회
@@ -298,7 +292,7 @@ class Module6BigDaddy:
             return
         self.vol_queue = list(self.candidates.keys())
         self._tr_handler = self._on_tr_vol
-        QTimer.singleShot(300, lambda: self._scan_vol(0))
+        self._scan_vol(0)
 
     # ==========================================================
     # PHASE2: 60일 거래량 조회
@@ -309,20 +303,24 @@ class Module6BigDaddy:
             self._phase2_done()
             return
         code = self.vol_queue[idx]
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "수정주가구분", "1")
-        self.kiwoom.dynamicCall(
-            "CommRqData(QString, QString, int, QString)",
-            "빅콤보일봉조회", "opt10081", 0, "0711")
+
+        def _do(c=code):
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "수정주가구분", "1")
+            self.kiwoom.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                "빅콤보일봉조회", "opt10081", 0, "0711")
+        self.queue.push(_do)
 
     def _on_tr_vol(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "빅콤보일봉조회":
             return
+        self.queue.done()
         code = self.vol_queue[self.vol_idx]
         if code not in self.candidates:
-            QTimer.singleShot(200, lambda: self._scan_vol(self.vol_idx + 1))
+            self._scan_vol(self.vol_idx + 1)
             return
         try:
             volumes = []
@@ -345,7 +343,7 @@ class Module6BigDaddy:
                           f"{ratio:.1f}배 (기준 {BC_VOL_RATIO}배)")
         except:
             pass
-        QTimer.singleShot(200, lambda: self._scan_vol(self.vol_idx + 1))
+        self._scan_vol(self.vol_idx + 1)
 
     def _phase2_done(self):
         # 거래량 미통과 제거
@@ -357,7 +355,7 @@ class Module6BigDaddy:
             return
         self.candle_queue = list(self.candidates.keys())
         self._tr_handler = self._on_tr_candle
-        QTimer.singleShot(300, lambda: self._scan_candle(0))
+        self._scan_candle(0)
 
     # ==========================================================
     # PHASE3: 3분봉 연속 양봉 4캔들
@@ -368,22 +366,26 @@ class Module6BigDaddy:
             self._phase3_done()
             return
         code = self.candle_queue[idx]
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "틱범위", "3")
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "수정주가구분", "1")
-        self.kiwoom.dynamicCall(
-            "CommRqData(QString, QString, int, QString)",
-            "빅콤보3분봉조회", "opt10080", 0, "0712")
+
+        def _do(c=code):
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "틱범위", "3")
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "수정주가구분", "1")
+            self.kiwoom.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                "빅콤보3분봉조회", "opt10080", 0, "0712")
+        self.queue.push(_do)
 
     def _on_tr_candle(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "빅콤보3분봉조회":
             return
+        self.queue.done()
         code = self.candle_queue[self.candle_idx]
         if code not in self.candidates:
-            QTimer.singleShot(200, lambda: self._scan_candle(self.candle_idx + 1))
+            self._scan_candle(self.candle_idx + 1)
             return
         try:
             candles = []
@@ -414,7 +416,7 @@ class Module6BigDaddy:
                       f"연속양봉 {consecutive}개")
         except:
             pass
-        QTimer.singleShot(200, lambda: self._scan_candle(self.candle_idx + 1))
+        self._scan_candle(self.candle_idx + 1)
 
     def _phase3_done(self):
         self.candidates = {
@@ -425,7 +427,7 @@ class Module6BigDaddy:
             return
         self.prog_queue = list(self.candidates.keys())
         self._tr_handler = self._on_tr_prog
-        QTimer.singleShot(300, lambda: self._scan_prog(0))
+        self._scan_prog(0)
 
     # ==========================================================
     # PHASE4: 프로그램 순매수 3만주 이상
@@ -436,24 +438,28 @@ class Module6BigDaddy:
             self._phase4_done()
             return
         code = self.prog_queue[idx]
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "종목코드", code)
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "금액수량구분", "1")  # 수량
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "매매구분", "0")
-        self.kiwoom.dynamicCall(
-            "SetInputValue(QString, QString)", "단위구분", "1")
-        self.kiwoom.dynamicCall(
-            "CommRqData(QString, QString, int, QString)",
-            "빅콤보프로그램조회", "opt10059", 0, "0713")
+
+        def _do(c=code):
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "종목코드", c)
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "금액수량구분", "1")  # 수량
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "매매구분", "0")
+            self.kiwoom.dynamicCall(
+                "SetInputValue(QString, QString)", "단위구분", "1")
+            self.kiwoom.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                "빅콤보프로그램조회", "opt10059", 0, "0713")
+        self.queue.push(_do)
 
     def _on_tr_prog(self, screen, rqname, trcode, recordname, prev_next, *args):
         if rqname != "빅콤보프로그램조회":
             return
+        self.queue.done()
         code = self.prog_queue[self.prog_idx]
         if code not in self.candidates:
-            QTimer.singleShot(200, lambda: self._scan_prog(self.prog_idx + 1))
+            self._scan_prog(self.prog_idx + 1)
             return
         try:
             buy_str  = self.kiwoom.dynamicCall(
@@ -473,93 +479,30 @@ class Module6BigDaddy:
                       f"순매수 {net_qty:,}주")
         except:
             pass
-        QTimer.singleShot(200, lambda: self._scan_prog(self.prog_idx + 1))
+        self._scan_prog(self.prog_idx + 1)
 
     def _phase4_done(self):
         self.candidates = {
             c: d for c, d in self.candidates.items() if d["prog_ok"]
         }
-        print(f"[모듈6] PHASE4 완료. 프로그램 통과: {len(self.candidates)}개 → 뉴스 판별")
+        print(f"[모듈6] PHASE4 완료. 프로그램 통과: {len(self.candidates)}개")
         if not self.candidates:
             return
-        # 뉴스 판별 (Gemini) → 순차 처리
-        codes = list(self.candidates.keys())
-        self._check_news(codes, 0)
+        self._finalize()
 
     # ==========================================================
-    # PHASE5: Gemini 뉴스 빅이벤트 판별
+    # 최종 후보 확정 (점수 순 정렬 후 진입)
     # ==========================================================
-    def _check_news(self, codes: list, idx: int):
-        if idx >= len(codes):
-            self._phase5_done()
-            return
-        code = codes[idx]
-        if code not in self.candidates:
-            QTimer.singleShot(500, lambda: self._check_news(codes, idx + 1))
-            return
-        name = self.candidates[code]["name"]
-        print(f"  [빅콤보] Gemini 뉴스 판별: {name}")
-
-        def do_gemini():
-            try:
-                prompt = (
-                    f"오늘 날짜 기준으로 '{name}' 종목의 최신 주요 뉴스를 검색해서 분석해줘.\n"
-                    f"다음 기준으로 판단해:\n"
-                    f"- 공시 (실적 서프라이즈, 대규모 수주, M&A, 지분 취득, 유니콘 투자 등)\n"
-                    f"- 정책 수혜 (정부 지원, 규제 완화 등)\n"
-                    f"- 업황 모멘텀 (섹터 강세, 수출 호조 등)\n\n"
-                    f"응답 형식 (JSON만, 다른 텍스트 없이):\n"
-                    f'{{"is_big_event": true/false, '
-                    f'"score": 1~10, '
-                    f'"summary": "한줄 요약", '
-                    f'"event_type": "공시/정책/업황/없음"}}'
-                )
-                payload = {
-                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 300}
-                }
-                resp = requests.post(GEMINI_URL, json=payload, timeout=20)
-                data = resp.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
-                text = text.replace("```json", "").replace("```", "").strip()
-
-                import json
-                result = json.loads(text)
-                is_big  = result.get("is_big_event", False)
-                score   = result.get("score", 0)
-                summary = result.get("summary", "")
-                etype   = result.get("event_type", "없음")
-
-                self.candidates[code]["news_ok"]      = is_big
-                self.candidates[code]["news_score"]   = score
-                self.candidates[code]["news_summary"]  = summary
-                self.candidates[code]["news_type"]     = etype
-                print(f"    → {'✅ 빅이벤트' if is_big else '❌ 일반'} "
-                      f"점수:{score} {summary[:30]}")
-
-            except Exception as e:
-                print(f"    → Gemini 오류: {e} - 뉴스 없음으로 처리")
-                self.candidates[code]["news_ok"] = False
-
-            QTimer.singleShot(500, lambda: self._check_news(codes, idx + 1))
-
-        # Qt 이벤트 루프 블로킹 방지: singleShot으로 실행
-        QTimer.singleShot(100, do_gemini)
-
-    def _phase5_done(self):
-        # 빅이벤트 아니어도 점수 높으면 통과 (score >= 6)
-        final = {}
-        for code, d in self.candidates.items():
-            news_score = d.get("news_score", 0)
-            if d["news_ok"] or news_score >= 6:
-                d["total_score"] = d["score"] + news_score
-                final[code] = d
+    def _finalize(self):
+        final = dict(self.candidates)
+        for d in final.values():
+            d["total_score"] = d["score"]
 
         # 점수 순 정렬
         final = dict(sorted(final.items(),
                             key=lambda x: x[1]["total_score"], reverse=True))
 
-        print(f"[모듈6] PHASE5 완료. 최종 후보: {len(final)}개")
+        print(f"[모듈6] 최종 후보: {len(final)}개")
         if not final:
             send_telegram("[모듈6] 빅콤보 - 오늘은 해당 종목 없음")
             return
@@ -597,7 +540,6 @@ class Module6BigDaddy:
         qty       = max(1, BC_ENTRY_AMOUNT // price)
         gap_str   = f"{d['gap_rate']*100:+.1f}%"
         sijeo_str = " 🔥시=저" if d["is_sijeo"] else ""
-        news_str  = d.get("news_summary", "뉴스 없음")
 
         # 키움 시장가 매수
         ok = tm.enter_position(
@@ -627,7 +569,6 @@ class Module6BigDaddy:
                 f"  갭: {gap_str}  점수: {d['total_score']}점\n"
                 f"  프로그램: +{d['prog_qty']:,}주\n"
                 f"  진입가: {price:,}원  수량: {qty}주\n"
-                f"  뉴스: {news_str}\n"
                 f"  ─────────────────\n"
                 f"  30분 내 -2% 눌림 시 추매 알림 예정"
             )

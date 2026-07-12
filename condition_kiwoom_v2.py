@@ -196,7 +196,7 @@ def on_condition_load():
     mod3    = Module3Closing(kiwoom, condition_list)
     mod4    = Module4Chalna(kiwoom)
     mod5    = Module5Sonsugun(kiwoom, queue, mod1)
-    mod6    = Module6BigDaddy(kiwoom)
+    mod6    = Module6BigDaddy(kiwoom, queue)
     mod7    = Module7Scan3200(kiwoom, queue)
 
     mod1.set_condition_list(condition_list)
@@ -361,27 +361,14 @@ def _register_condition(screen: str, cname: str, cidx: str):
 
 def _poll_conditions():
     """조건검색 폴링 1회 (is_realtime=0 — OCX 스택 오버런 방지)"""
-    hw = AUTO_TRADE_CONDITION
-    gj = GDJUM_CONDITION
+    # 모듈2(황사장/전일고점돌파) 스캔 정지 요청으로 hw/gj 폴링 비활성화
     m7 = M7_CONDITION
-    if hw in condition_list:
-        kiwoom.dynamicCall("SendConditionStop(QString,QString,int)",
-                           "0211", hw, int(condition_list[hw]))
-        kiwoom.dynamicCall("SendCondition(QString,QString,int,int)",
-                           "0211", hw, int(condition_list[hw]), 0)
-    def _poll_gj():
-        if gj in condition_list:
-            kiwoom.dynamicCall("SendConditionStop(QString,QString,int)",
-                               "0210", gj, int(condition_list[gj]))
-            kiwoom.dynamicCall("SendCondition(QString,QString,int,int)",
-                               "0210", gj, int(condition_list[gj]), 0)
     def _poll_m7():
         if m7 in condition_list:
             kiwoom.dynamicCall("SendConditionStop(QString,QString,int)",
                                M7_SCREEN, m7, int(condition_list[m7]))
             kiwoom.dynamicCall("SendCondition(QString,QString,int,int)",
                                M7_SCREEN, m7, int(condition_list[m7]), 0)
-    QTimer.singleShot(300, _poll_gj)
     QTimer.singleShot(600, _poll_m7)
 
 def register_realtime_conditions():
@@ -389,12 +376,13 @@ def register_realtime_conditions():
     # is_realtime=1 제거 — OnReceiveRealCondition 폭주가 OCX 스택 오버런 원인
     kiwoom.OnReceiveTrCondition.connect(on_initial_condition)
 
-    mod2_hw.start_monitoring()
-    mod2_gj.start_monitoring()
+    # 모듈2(황사장/전일고점돌파) 스캔·모의투자·무편입 알림 정지 요청으로 비활성화
+    # mod2_hw.start_monitoring()
+    # mod2_gj.start_monitoring()
     mod7.start_monitoring()
     send_telegram(
         "<b>[조건검색] 폴링 감시 시작 (30초 간격)</b>\n"
-        "• 황사장 | 전일고점돌파 | 3분200억\n"
+        "• 3분200억 (황사장 | 전일고점돌파 정지됨)\n"
         "편입 즉시 브리핑 | 10분 무편입 시 알림"
     )
 
