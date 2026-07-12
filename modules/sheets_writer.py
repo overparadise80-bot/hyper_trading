@@ -32,7 +32,16 @@ STOCK_TOP_N  = 5
 ROWS_PER_DAY = 1 + STOCK_TOP_N   # 6행
 
 _WHITE  = {"red": 1.00, "green": 1.00, "blue": 1.00}
+_BLACK  = {"red": 0.10, "green": 0.10, "blue": 0.10}
 _HDR_BG = {"red": 0.16, "green": 0.16, "blue": 0.20}
+
+# (채도, 명도) 4단계 — 비비드딥→비비드→미디엄→소프트파스텔
+_SL_TIERS = [
+    (0.90, 0.50),
+    (0.80, 0.62),
+    (0.68, 0.72),
+    (0.50, 0.82),
+]
 
 def _hsl_to_rgb(h: float, s: float, l: float) -> tuple:
     if s == 0:
@@ -49,18 +58,17 @@ def _hsl_to_rgb(h: float, s: float, l: float) -> tuple:
     return _hue(p, q, h + 1/3), _hue(p, q, h), _hue(p, q, h - 1/3)
 
 
-def _sector_color(theme_name: str) -> dict:
-    """
-    섹터명 → 고정 파스텔 배경색
-    - 같은 섹터명: 날짜가 달라도 항상 동일한 색
-    - 다른 섹터명: 0~359° 연속 색조 공간에서 1/360 미만 확률로만 동일
-    - 채도 0.45 / 명도 0.88 → 눈이 편한 파스텔 톤
-    """
-    # 128비트 전체 해시로 색조 결정 → 섹터명마다 고유 hue 보장
+def _sector_color(theme_name: str) -> tuple:
+    """섹터명 → (배경색, 글자색) — 비비드~소프트 4단계 + 명도 기반 글자색 자동 선택"""
     digest = int(hashlib.md5(theme_name.encode("utf-8")).hexdigest(), 16)
-    hue = (digest % 360) / 360.0
-    r, g, b = _hsl_to_rgb(hue, 0.45, 0.88)
-    return {"red": round(r, 3), "green": round(g, 3), "blue": round(b, 3)}
+    hue  = (digest % 360) / 360.0
+    tier = (digest // 360) % len(_SL_TIERS)
+    s, l = _SL_TIERS[tier]
+    r, g, b = _hsl_to_rgb(hue, s, l)
+    bg = {"red": round(r, 3), "green": round(g, 3), "blue": round(b, 3)}
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    text = _WHITE if lum < 0.30 else _BLACK
+    return bg, text
 
 
 def _col_letter(col: int) -> str:
@@ -168,14 +176,15 @@ def write_daily_sector(theme_ranking: list):
                 }
             })
 
-            # 테마 헤더 행 (row 2) — 섹터별 고정 파스텔 색 + 굵은 글씨
+            # 테마 헤더 행 (row 2) — 섹터별 고정 색 + 명도 기반 글자색
             for ci, t in enumerate(themes):
                 col_letter = _col_letter(2 + ci)
+                bg_color, text_color = _sector_color(t["theme"])
                 fmt_requests.append({
                     "range": f"{col_letter}2",
                     "format": {
-                        "textFormat": {"bold": True, "fontSize": 10},
-                        "backgroundColor": _sector_color(t["theme"]),
+                        "textFormat": {"bold": True, "fontSize": 10, "foregroundColor": text_color},
+                        "backgroundColor": bg_color,
                         "horizontalAlignment": "CENTER",
                         "verticalAlignment": "MIDDLE",
                         "wrapStrategy": "WRAP",
