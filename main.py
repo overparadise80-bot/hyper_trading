@@ -203,29 +203,37 @@ def _kill_stale(name: str):
     script_path = SCRIPTS[name][0]
     script_name = os.path.basename(script_path)
     try:
+        # wmic은 최신 Windows에서 제거/불안정 — PowerShell CIM으로 대체.
+        # 자기 자신의 조회 명령어 문자열에도 script_name이 포함되므로
+        # "포함(-like *x*)"이 아니라 "끝에 스크립트명으로 끝나는지"로 매칭해 자기참조 오검출을 방지.
+        ps_cmd = (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.CommandLine -and "
+            f"$_.CommandLine.TrimEnd().EndsWith('{script_name}') }} | "
+            "Select-Object -ExpandProperty ProcessId"
+        )
         result = subprocess.check_output(
-            ['wmic', 'process', 'where',
-             f'CommandLine like "%{script_name}%"',
-             'get', 'ProcessId', '/format:csv'],
-            text=True, stderr=subprocess.DEVNULL, timeout=10,
+            ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_cmd],
+            text=True, stderr=subprocess.DEVNULL, timeout=15,
             creationflags=0x08000000
         )
         killed = []
         for line in result.strip().splitlines():
-            parts = line.strip().split(',')
-            if len(parts) >= 2 and parts[-1].strip().isdigit():
-                pid = int(parts[-1].strip())
-                if pid == os.getpid():
-                    continue
-                try:
-                    subprocess.run(
-                        ['taskkill', '/F', '/PID', str(pid)],
-                        stderr=subprocess.DEVNULL, timeout=5,
-                        creationflags=0x08000000
-                    )
-                    killed.append(pid)
-                except Exception:
-                    pass
+            line = line.strip()
+            if not line.isdigit():
+                continue
+            pid = int(line)
+            if pid == os.getpid():
+                continue
+            try:
+                subprocess.run(
+                    ['taskkill', '/F', '/PID', str(pid)],
+                    stderr=subprocess.DEVNULL, timeout=5,
+                    creationflags=0x08000000
+                )
+                killed.append(pid)
+            except Exception:
+                pass
         if killed:
             print(f"[{now()}] 기존 {name} 프로세스 종료: {killed}")
             time.sleep(1)
