@@ -111,7 +111,7 @@ M7_START         = time(9, 5)
 M7_END           = time(14, 0)
 M7_CONDITION     = "3분200억거래대금"
 M7_SCREEN        = "0150"
-M7_STOP_LOSS_RATE = -0.02   # 모듈7 전용 손절 (공통 STOP_LOSS_RATE와 별도)
+M7_STOP_LOSS_RATE = -0.025  # 모듈7 전용 손절 (공통 STOP_LOSS_RATE와 별도, 추매(-2%)보다 깊게)
 
 # =============================================================
 # 텔레그램

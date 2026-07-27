@@ -12,6 +12,7 @@ from modules.common import *
 # 공유 포지션 저장소
 # =============================================================
 positions         = {}   # {코드: 포지션 dict}
+trade_log         = []   # 당일 전체 진입 이력 (positions에서 pop되어도 유지, dict 참조 공유)
 kiwoom_realtime_cache = {}   # {코드: 현재가}
 realtime_subscribed   = set()
 pending_orders        = {}
@@ -124,6 +125,7 @@ def enter_position(code: str, name: str, price: int,
     actual_price = limit_price if order_type == "limit" else price
 
     positions[code] = {
+        "code":          code,
         "name":          name,
         "entry_price":   actual_price,
         "qty":           qty,
@@ -141,8 +143,15 @@ def enter_position(code: str, name: str, price: int,
         "noon_entry":    noon_entry,
         "is_high_price": is_high,
         "is_overnight":  False,
+        "status":        "OPEN",
+        "exit_price":    None,
+        "exit_time":     None,
+        "exit_reason":   None,
+        "pnl_rate":      None,
+        "pnl_amount":    None,
     }
 
+    trade_log.append(positions[code])
     subscribe_realtime(code)
     setup_exit_timer(code, noon_entry)
 
@@ -189,6 +198,13 @@ def exit_position(code: str, reason: str = "청산"):
     pnl_rate    = (cur_price - entry_price) / entry_price
     pnl_amount  = (cur_price - entry_price) * qty
     elapsed     = int((datetime.now() - pos["entry_time"]).total_seconds() / 60)
+
+    pos["status"]     = "CLOSED"
+    pos["exit_price"] = cur_price
+    pos["exit_time"]  = datetime.now()
+    pos["exit_reason"] = reason
+    pos["pnl_rate"]    = pnl_rate
+    pos["pnl_amount"]  = pnl_amount
 
     send_telegram(
         f"<b>자동매매 청산 [{reason}]</b>\n"
@@ -344,3 +360,52 @@ def on_chejan(gubun: str, kiwoom):
             # 2차 추가매수 체결: do_add_buy에서 계산한 가중평균 유지, stop_price만 갱신
             pos["stop_price"] = pos["entry_price"] * (1 + pos["stop_loss_rate"])
         print(f"  [체결확인] {name} 매수 {eq}주 @ {ep:,}원")
+
+# =============================================================
+# 당일 매매 결과 요약 (진입~청산 전체 이력, positions pop 후에도 유지)
+# =============================================================
+def get_trade_summary_text() -> str:
+    if not trade_log:
+        return "오늘 진입한 매매가 없습니다."
+
+    lines      = []
+    total_pnl  = 0
+    closed_cnt = 0
+    open_cnt   = 0
+    win_cnt    = 0
+    lose_cnt   = 0
+
+    for i, pos in enumerate(trade_log, 1):
+        entry_time = pos["entry_time"].strftime("%H:%M")
+        if pos.get("status") == "CLOSED":
+            closed_cnt += 1
+            pnl_rate   = pos["pnl_rate"]
+            pnl_amount = pos["pnl_amount"]
+            total_pnl += pnl_amount
+            if pnl_amount >= 0:
+                win_cnt += 1
+            else:
+                lose_cnt += 1
+            exit_time = pos["exit_time"].strftime("%H:%M")
+            lines.append(
+                f"{i}. {pos['name']} [{pos['condition']}]\n"
+                f"   {entry_time}→{exit_time}  {pos['entry_price']:,}→{pos['exit_price']:,}원\n"
+                f"   {pnl_rate:+.2%} / {pnl_amount:+,.0f}원  ({pos['exit_reason']})"
+            )
+        else:
+            open_cnt += 1
+            cur_price = kiwoom_realtime_cache.get(pos["code"], pos["entry_price"])
+            rate      = (cur_price - pos["entry_price"]) / pos["entry_price"]
+            lines.append(
+                f"{i}. {pos['name']} [{pos['condition']}]  <b>보유중</b>\n"
+                f"   진입 {entry_time}  {pos['entry_price']:,}→{cur_price:,}원\n"
+                f"   평가손익: {rate:+.2%}"
+            )
+
+    header = (
+        f"총 {len(trade_log)}건 진입 (청산 {closed_cnt} / 보유중 {open_cnt})\n"
+        f"승 {win_cnt} 패 {lose_cnt}\n"
+        f"누적손익(청산분): {total_pnl:+,.0f}원\n"
+        f"{'─' * 20}"
+    )
+    return header + "\n\n" + "\n\n".join(lines)

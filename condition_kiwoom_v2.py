@@ -398,6 +398,9 @@ def register_realtime_conditions():
     # 15:30 폴링 자동 종료
     _schedule_condition_stop()
 
+    # 15:30 당일 매매 결과 요약 전송
+    _schedule_trade_summary()
+
 def _schedule_condition_stop():
     """15:30에 조건검색 폴링 및 무편입 알림 타이머 자동 종료"""
     now_dt = datetime.now()
@@ -441,6 +444,22 @@ def _send_daily_summary():
     m7_text = mod7.get_daily_summary() if mod7 else "3분200억 데이터 없음"
     send_telegram(f"{header}\n\n{hw_text}\n\n{gj_text}\n\n{m7_text}")
     print("  [일일요약] 조건검색 이력 전송 완료")
+
+def _schedule_trade_summary():
+    """15:30에 당일 진입했던 전체 매매 결과(진입~청산)를 텔레그램으로 전송"""
+    now_dt = datetime.now()
+    target = now_dt.replace(hour=15, minute=30, second=0, microsecond=0)
+    if now_dt >= target:
+        return  # 이미 지난 시각이면 스킵
+    ms = int((target - now_dt).total_seconds() * 1000)
+    QTimer.singleShot(ms, _send_trade_summary)
+    print(f"  [매매결과] 15:30 전송 예약 ({ms // 60000}분 후)")
+
+def _send_trade_summary():
+    today = datetime.now().strftime("%m/%d")
+    header = f"<b>💰 당일 매매 결과 ({today})</b>\n{'─' * 20}"
+    send_telegram(f"{header}\n\n{tm.get_trade_summary_text()}")
+    print("  [매매결과] 당일 매매 결과 전송 완료")
 
 def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
     """폴링 결과 수신 — 이전 목록과 비교해 신규 편입/이탈만 처리"""
