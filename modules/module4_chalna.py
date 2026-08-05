@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 module4_chalna.py - 찰나의 매매 + 52주 신고가 돌파
-공통 인프라: 거래량 상위 100종목 실시간 구독 (10분 갱신)
+공통 인프라: 거래량 상위 200종목 실시간 구독 (10분 갱신)
 
 [전략1] 찰나의 매매
-- 조건: 매도잔량>=매수잔량x2 + 프로그램순매수 + 체결강도>100% + 대량체결 + 매도벽붕괴
+- 조건: 매도잔량>=매수잔량x4 + 프로그램순매수 + 체결강도>100% + 대량체결
+  → 위 조건을 만족하는 틱이 20초 내 3회 이상 반복돼야 신호 후보로 인정
+  → 후보 확정 후 3초 대기, 그 사이 가격이 트리거가 대비 -0.5% 이상 밀리면 진입 취소(팔로우스루)
 - 최대 3종목
 
 [전략2] 52주 신고가 돌파
@@ -13,12 +15,15 @@ module4_chalna.py - 찰나의 매매 + 52주 신고가 돌파
 - 한도: 전체 MAX_POSITIONS 공유
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from PyQt5.QtCore import QTimer
 from modules.common import *
 from modules import trade_manager as tm
 
 class Module4Chalna:
+    # Kiwoom SetRealReg는 화면번호당 최대 100종목까지만 등록 가능 → 200종목을 2개 화면으로 분산
+    REALTIME_SCREENS = ["9100", "9101"]
+
     def __init__(self, kiwoom):
         self.kiwoom      = kiwoom
         self.top100      = []
@@ -28,6 +33,7 @@ class Module4Chalna:
         self.refresh_timer = QTimer()
         self._paused     = False  # 모듈1 스캔 중 구독 차단 플래그
         self._tr_handler = None
+        self._pending_ft = set()  # 팔로우스루 대기 중인 종목(중복 예약 방지)
         self.kiwoom.OnReceiveTrData.connect(self._on_tr_dispatch)
 
     def _on_tr_dispatch(self, screen, rqname, trcode, recordname, prev_next, *args):
@@ -83,7 +89,8 @@ class Module4Chalna:
         """모듈1 스캔 중 실시간 구독 완전 차단"""
         self._paused = True
         try:
-            self.kiwoom.dynamicCall("SetRealRemove(QString, QString)", "9100", "ALL")
+            for screen in self.REALTIME_SCREENS:
+                self.kiwoom.dynamicCall("SetRealRemove(QString, QString)", screen, "ALL")
         except:
             pass
         print("  [모듈4] 실시간 구독 일시 중단 (스캔 중)")
@@ -98,13 +105,17 @@ class Module4Chalna:
             return
         if not self.top100:
             return
-        self.kiwoom.dynamicCall("SetRealRemove(QString, QString)", "9100", "ALL")
-        codes_str = ";".join(self.top100)
-        fid_list  = "10;15;41;42;43;44;45;61;62;63;64;65;228;291"
-        self.kiwoom.dynamicCall(
-            "SetRealReg(QString, QString, QString, QString)",
-            "9100", codes_str, fid_list, "0"
-        )
+        fid_list = "10;15;41;42;43;44;45;61;62;63;64;65;228;291"
+        for screen in self.REALTIME_SCREENS:
+            self.kiwoom.dynamicCall("SetRealRemove(QString, QString)", screen, "ALL")
+        for i, screen in enumerate(self.REALTIME_SCREENS):
+            chunk = self.top100[i * 100:(i + 1) * 100]
+            if not chunk:
+                continue
+            self.kiwoom.dynamicCall(
+                "SetRealReg(QString, QString, QString, QString)",
+                screen, ";".join(chunk), fid_list, "0"
+            )
 
     def on_realtime(self, code: str, real_type: str):
         if code not in self.top100 or not is_m4_open():
@@ -134,6 +145,8 @@ class Module4Chalna:
                     elif key == "chegyul":
                         cache[key] = float(v)
                     else:
+                        # last_bulk(FID15)는 abs() 없이 부호 유지: 매도 체결(-)은
+                        # 임계값 미달로 자연 필터링되어 매수 대량체결만 조건 통과
                         cache[key] = int(v)
                 except:
                     pass
@@ -161,18 +174,47 @@ class Module4Chalna:
         if chegyul <= CHEGYUL_MIN:                 return
         if bulk < self._get_bulk_threshold(price): return
 
-        # 해석 A: 사라진 매도잔량(ask_prev - ask_qty)이 매수호가 잔량(bid_qty)의
-        # WALL_BREAK_RATE 이상이어야 매도벽 붕괴로 인정
-        wall_decrease = ask_prev - ask_qty
-        wall_change   = wall_decrease / bid_qty  # 알림/로그용 비율(매수잔량 대비)
-        if wall_decrease <= 0 or wall_change < WALL_BREAK_RATE:
+        # 반복 횟수 집계: 20초 윈도우 내 3회 이상 조건 충족 시에만 신호 후보로 인정
+        now  = datetime.now()
+        hits = cache.setdefault("bulk_hits", [])
+        hits.append(now)
+        cutoff = now - timedelta(seconds=BULK_COUNT_WINDOW)
+        while hits and hits[0] < cutoff:
+            hits.pop(0)
+        if len(hits) < BULK_COUNT_REQUIRED:
             return
 
-        self._fire_alert(code, price, ask_qty, bid_qty,
-                         chegyul, prog_buy, bulk, wall_change)
+        cache["bulk_hits"] = []   # 후보 확정 → 카운트 리셋 (팔로우스루 통과/실패 무관하게 재시작)
+        self._schedule_followthrough(code, price)
+
+    def _schedule_followthrough(self, code: str, trigger_price: int):
+        if code in self._pending_ft:
+            return
+        self._pending_ft.add(code)
+        QTimer.singleShot(
+            BULK_FOLLOWTHROUGH_WAIT * 1000,
+            lambda: self._confirm_followthrough(code, trigger_price)
+        )
+
+    def _confirm_followthrough(self, code: str, trigger_price: int):
+        self._pending_ft.discard(code)
+        if code not in self.top100:
+            return
+        cache = self.cache.get(code)
+        if not cache or cache["price"] <= 0:
+            return
+
+        cur_price = cache["price"]
+        rate = (cur_price - trigger_price) / trigger_price
+        if rate < BULK_FOLLOWTHROUGH_TOL:
+            print(f"  [모듈4] {self.names.get(code, code)} 팔로우스루 실패 ({rate:+.2%}) - 진입 취소")
+            return
+
+        self._fire_alert(code, cur_price, cache["ask_qty"], cache["bid_qty"],
+                         cache["chegyul"], cache["prog_buy"], cache["last_bulk"])
 
     def _fire_alert(self, code, price, ask_qty, bid_qty,
-                    chegyul, prog_buy, bulk, wall_change):
+                    chegyul, prog_buy, bulk):
         now = datetime.now()
         last = self.alerted.get(code)
         if last and (now - last).total_seconds() < ALERT_COOLDOWN:
@@ -200,7 +242,6 @@ class Module4Chalna:
         msg += f"  체결강도: {chegyul:.1f}%\n"
         msg += f"  프로그램: +{prog_buy:,}주\n"
         msg += f"  대량체결: {bulk:,}주\n"
-        msg += f"  매도벽: {wall_change:+.1%} 붕괴!\n"
 
         if can_enter:
             qty = max(1, 500_000 // price)   # 50만원 기준, 50만원 이상 종목은 1주

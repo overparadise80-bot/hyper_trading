@@ -72,16 +72,20 @@ M4_START          = time(9, 0)
 M4_END            = time(15, 20)
 M4_MAX_POSITIONS  = 5
 H52_MAX_POSITIONS = 10
-TOP_N             = 100
+TOP_N             = 200
 BULK_LOW          = 3000
 BULK_MID          = 1000
 BULK_HIGH         = 500
 PRICE_B1          = 50000
 PRICE_B2          = 100000
-SELL_BUY_RATIO    = 2.0
+SELL_BUY_RATIO    = 4.0
 CHEGYUL_MIN       = 100.0
-WALL_BREAK_RATE   = 0.03   # 매도벽 붕괴 기준: (직전매도잔량-현재매도잔량) / 매수잔량 >= 이 값
 ALERT_COOLDOWN    = 300
+
+BULK_COUNT_REQUIRED       = 3      # 대량매수 조건, 윈도우 내 최소 반복 횟수
+BULK_COUNT_WINDOW         = 20     # 반복 횟수 집계 윈도우(초)
+BULK_FOLLOWTHROUGH_WAIT   = 3      # 반복 충족 후 진입 전 확인 대기시간(초)
+BULK_FOLLOWTHROUGH_TOL    = -0.005 # 대기 중 허용 밀림폭(트리거가 대비, -0.5%)
 
 # =============================================================
 # 공통 매매 설정
