@@ -20,7 +20,7 @@ kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
 # 설정
 # =============================================================
 # 모의투자 계좌
-ACCOUNT_NUM = "8126033411"
+ACCOUNT_NUM = os.getenv("ACCOUNT_NUM")
 
 # 모듈1: 주도섹터 + 52주신고가
 M1_START    = time(9, 10)
