@@ -4,9 +4,13 @@ trade_manager.py - 공통 매매 관리
 모든 모듈이 공유하는 포지션/진입/청산/트레일링 로직
 """
 
+import os
+import json
 from datetime import datetime
 from PyQt5.QtCore import QTimer
 from modules.common import *
+
+OVERNIGHT_FILE = os.path.join("logs", "overnight_positions.json")
 
 # =============================================================
 # 공유 포지션 저장소
@@ -90,7 +94,10 @@ def enter_position(code: str, name: str, price: int,
                    limit_price: int = 0,
                    entry_amount: int = 0,
                    add_buy: bool = True,
-                   stop_loss_rate: float = None) -> bool:
+                   stop_loss_rate: float = None,
+                   overnight: bool = False,
+                   allow_trailing: bool = True,
+                   skip_time_gate: bool = False) -> bool:
     """
     포지션 진입
     order_type     : "market" or "limit"
@@ -98,12 +105,15 @@ def enter_position(code: str, name: str, price: int,
     entry_amount   : 0이면 공통 ENTRY_AMOUNT 사용, 양수면 해당 금액 기준으로 수량 계산
     add_buy        : False면 2차 추가매수(실시간 -2% 눌림 체크)를 비활성화
     stop_loss_rate : None이면 공통 STOP_LOSS_RATE 사용, 지정 시 해당 포지션에만 적용
+    overnight      : True면 당일 시간기반 청산 타이머를 걸지 않고 익영업일 시가청산 대상으로 저장
+    allow_trailing : False면 실시간 트레일링 스탑 활성화를 건너뜀 (손절만 적용)
+    skip_time_gate : True면 is_m2_open() 매매시간 체크를 건너뜀 (14:00 이후 진입하는 전략용)
     """
     if code in positions:
         return False
     if len(positions) >= MAX_POSITIONS:
         return False
-    if not is_m2_open():
+    if not skip_time_gate and not is_m2_open():
         return False
 
     base_amount  = entry_amount if entry_amount > 0 else ENTRY_AMOUNT
@@ -136,13 +146,14 @@ def enter_position(code: str, name: str, price: int,
         "stop_price":    actual_price * (1 + stop_rate),
         "stop_loss_rate": stop_rate,
         "trail_active":  False,
+        "allow_trailing": allow_trailing,
         "add_bought":    False,
         "add_buy_enabled": add_buy,
         "exit_timer":    None,
         "condition":     condition,
         "noon_entry":    noon_entry,
         "is_high_price": is_high,
-        "is_overnight":  False,
+        "is_overnight":  overnight,
         "status":        "OPEN",
         "exit_price":    None,
         "exit_time":     None,
@@ -153,7 +164,10 @@ def enter_position(code: str, name: str, price: int,
 
     trade_log.append(positions[code])
     subscribe_realtime(code)
-    setup_exit_timer(code, noon_entry)
+    if overnight:
+        _save_overnight_position(code)
+    else:
+        setup_exit_timer(code, noon_entry)
 
     return True
 
@@ -221,6 +235,111 @@ def exit_position(code: str, reason: str = "청산"):
         pos["exit_timer"].stop()
     unsubscribe_realtime(code)
     positions.pop(code, None)
+    if pos.get("is_overnight"):
+        _clear_overnight_position(code)
+
+# =============================================================
+# 익영업일 시가청산 (종가베팅 등 overnight=True 포지션)
+# - condition_kiwoom_v2.py는 매일 08:00에 새 프로세스로 재시작되므로
+#   positions 딕셔너리(메모리)가 초기화됨 → 파일로 영속화 후 기동 시 복원
+# =============================================================
+def _load_overnight_file() -> dict:
+    if os.path.exists(OVERNIGHT_FILE):
+        try:
+            with open(OVERNIGHT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _write_overnight_file(data: dict):
+    try:
+        os.makedirs(os.path.dirname(OVERNIGHT_FILE), exist_ok=True)
+        with open(OVERNIGHT_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  [trade_manager] 익일청산 파일 저장 오류: {e}")
+
+def _save_overnight_position(code: str):
+    pos  = positions.get(code)
+    if not pos:
+        return
+    data = _load_overnight_file()
+    data[code] = {
+        "name":        pos["name"],
+        "qty":         pos["total_qty"],
+        "entry_price": pos["entry_price"],
+        "entry_date":  datetime.now().strftime("%Y-%m-%d"),
+        "condition":   pos["condition"],
+    }
+    _write_overnight_file(data)
+
+def _clear_overnight_position(code: str):
+    data = _load_overnight_file()
+    if code in data:
+        data.pop(code)
+        _write_overnight_file(data)
+
+def load_and_schedule_overnight_exit():
+    """condition_kiwoom_v2.py 기동 시 1회 호출 — 전날 종가베팅 물량을 복원하고 09:01 시가청산 예약"""
+    data = _load_overnight_file()
+    if not data:
+        return
+    today   = datetime.now().strftime("%Y-%m-%d")
+    pending = {c: d for c, d in data.items() if d.get("entry_date") != today}
+    if not pending:
+        return
+
+    print(f"[trade_manager] 익일시가청산 대상 {len(pending)}종목 복원")
+    for code, d in pending.items():
+        if code in positions:
+            continue
+        positions[code] = {
+            "code":          code,
+            "name":          d["name"],
+            "entry_price":   d["entry_price"],
+            "qty":           d["qty"],
+            "total_qty":     d["qty"],
+            "entry_time":    datetime.now(),
+            "entry_amount":  d["entry_price"] * d["qty"],
+            "high_price":    d["entry_price"],
+            "stop_price":    0,
+            "stop_loss_rate": 0,
+            "trail_active":  False,
+            "allow_trailing": False,
+            "add_bought":    True,
+            "add_buy_enabled": False,
+            "exit_timer":    None,
+            "condition":     d.get("condition", "종가베팅"),
+            "noon_entry":    False,
+            "is_high_price": False,
+            "is_overnight":  True,
+            "status":        "OPEN",
+            "exit_price":    None,
+            "exit_time":     None,
+            "exit_reason":   None,
+            "pnl_rate":      None,
+            "pnl_amount":    None,
+        }
+        subscribe_realtime(code)
+
+    _schedule_open_exit(list(pending.keys()))
+
+def _schedule_open_exit(codes: list):
+    now    = datetime.now()
+    target = now.replace(hour=9, minute=1, second=0, microsecond=0)
+    if now >= target:
+        QTimer.singleShot(3000, lambda: _run_open_exit(codes))
+        return
+    diff = int((target - now).total_seconds() * 1000)
+    QTimer.singleShot(diff, lambda: _run_open_exit(codes))
+    print(f"[trade_manager] 익일시가청산 타이머 설정 (09:01, {diff // 1000}초 후)")
+
+def _run_open_exit(codes: list):
+    print(f"[trade_manager] 익일시가청산 실행 ({len(codes)}종목)")
+    for code in codes:
+        if code in positions:
+            exit_position(code, "익일시가청산")
 
 # =============================================================
 # 시간 기반 청산 타이머
@@ -295,8 +414,8 @@ def on_realtime_price(code: str, real_type: str, kiwoom):
 
     rate = (price - entry_price) / entry_price
 
-    # 트레일링 스탑 활성화
-    if not trail_active and rate >= TRAIL_ACTIVATE:
+    # 트레일링 스탑 활성화 (allow_trailing=False인 포지션은 건너뜀 — 손절만 적용)
+    if pos.get("allow_trailing", True) and not trail_active and rate >= TRAIL_ACTIVATE:
         pos["trail_active"] = True
         pos["stop_price"]   = entry_price
         trail_active = True

@@ -166,11 +166,11 @@ class Module3Closing:
     def _send_order(self, code: str):
         if code not in self.candidate_data:
             return
-        d   = self.candidate_data[code]
-        ok  = tm.enter_position(
+        d = self.candidate_data[code]
+        tm.enter_position(
             code, d["name"], d["price"],
             condition="종가베팅",
-            order_type="market"
+            order_type="market",
+            overnight=True,
+            skip_time_gate=True,
         )
-        if ok and code in tm.positions:
-            tm.positions[code]["is_overnight"] = True

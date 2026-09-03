@@ -19,6 +19,7 @@ import matplotlib.patches as mpatches
 from datetime import datetime, timedelta
 from PyQt5.QtCore import QTimer
 from modules.common import send_telegram, TELEGRAM_TOKEN, CHAT_ID
+from modules import trade_manager as tm
 
 SCREEN_CHART  = "0801"
 CHART_CANDLES = 30   # 15분봉 30개 (약 1.5거래일)
@@ -36,6 +37,15 @@ BRIEFING_HOUR = 15
 BRIEFING_MIN  = 5
 SECTOR_TOP_N  = 7
 
+# ── 종가베팅 자동매매 (2026-09-03 추가) ──────────────────────
+NOON_HOUR           = 12
+NOON_MIN            = 0
+ROCKET_MIN          = 3          # 업종 내 🚀(교집합) 최소 개수 — 이 이상인 업종 전부가 대상
+MIN_TOTAL_AMOUNT_EOK = 5000      # 모듈1 스캔종목 합산 거래대금 하한 (억원) — 미만이면 진입 금지
+M5_ENTRY_AMOUNT     = 500_000    # 종목당 진입금액 (공통 ENTRY_AMOUNT와 별도)
+M5_STOP_LOSS_RATE   = -0.03      # 당일 손절 (트레일링 미적용, 익일 시가청산)
+CHART_CANDIDATE_CAP = 5          # 업종당 차트/진입 후보 상한
+
 
 class Module5Sonsugun:
 
@@ -47,6 +57,8 @@ class Module5Sonsugun:
         self.top100_data  = {}      # {코드: {name, amount_eok, rate, rank}}
         self._briefing_date = None
         self._busy = False
+        self._noon_prices   = {}    # {코드: 12:00 시점 가격} — 종가베팅 상승조건 비교용
+        self._entered_today = set() # 종가베팅 자동매매로 이미 진입 시도한 코드
         self.kiwoom.OnReceiveTrData.connect(self._on_tr)
 
     def start(self):
@@ -58,6 +70,7 @@ class Module5Sonsugun:
         self._schedule_briefing()
         self._schedule_chart_briefing()
         self._schedule_next_news()
+        self._schedule_noon_snapshot()
 
         # 차트 조회용 상태
         self._chart_queue  = []   # [(code, name, rate)] 대기 목록
@@ -135,6 +148,44 @@ class Module5Sonsugun:
             for s in t["stocks"]
         }
         return leader & self.top100_codes
+
+    def get_qualifying_sectors(self):
+        """TOP7 주도섹터 중 🚀(교집합) 종목이 ROCKET_MIN개 이상인 섹터 전부
+        → [(sector_dict, milk_stocks_sorted_by_rank), ...]"""
+        if not self.module1.theme_ranking or not self.top100_codes:
+            return []
+        milk_codes = self.get_milk_codes()
+        result = []
+        for t in self.module1.theme_ranking[:SECTOR_TOP_N]:
+            milk_stocks = sorted(
+                [s for s in t["stocks"] if s["code"] in milk_codes],
+                key=lambda s: self.top100_data.get(s["code"], {}).get("rank", 999)
+            )
+            if len(milk_stocks) >= ROCKET_MIN:
+                result.append((t, milk_stocks))
+        return result
+
+    # ----------------------------------------------------------
+    # 12:00 기준가 스냅샷 (종가베팅 상승조건 비교용)
+    # ----------------------------------------------------------
+    def _schedule_noon_snapshot(self):
+        now    = datetime.now()
+        target = now.replace(hour=NOON_HOUR, minute=NOON_MIN, second=0, microsecond=0)
+        if now >= target:
+            return
+        diff = int((target - now).total_seconds() * 1000)
+        QTimer.singleShot(diff, self._capture_noon_prices)
+        print(f"[모듈5] 12:00 기준가 스냅샷 타이머 설정 ({diff // 1000}초 후)")
+
+    def _capture_noon_prices(self):
+        self._noon_prices = {
+            code: d["price"] for code, d in self.module1.stock_data.items()
+        }
+        print(f"[모듈5] 12:00 기준가 스냅샷 저장 ({len(self._noon_prices)}종목)")
+
+    def _get_total_scanned_amount_eok(self) -> int:
+        """모듈1이 스캔한 전체 종목 거래대금 합계 (억원)"""
+        return sum(d.get("amount", 0) for d in self.module1.stock_data.values())
 
     def get_top_sector(self):
         """교집합 종목 수가 가장 많은 섹터 반환 → (sector_dict, count)"""
@@ -287,28 +338,39 @@ class Module5Sonsugun:
             print("[모듈5] 15:02 차트 브리핑 타이머 설정")
 
     def _start_chart_briefing(self):
-        milk_codes = self.get_milk_codes()
-        top_sec, _ = self.get_top_sector()
-        if not milk_codes or not top_sec:
+        self._entered_today = set()   # 오늘자 종가베팅 자동매매 진입 이력 초기화
+        qualifying = self.get_qualifying_sectors()
+        if not qualifying:
+            print("[모듈5] 종가베팅 대상 업종 없음 (🚀 3개 이상 업종 없음)")
             return
 
-        milk_stocks = sorted(
-            [s for s in top_sec["stocks"] if s["code"] in milk_codes],
-            key=lambda s: self.top100_data.get(s["code"], {}).get("rank", 999)
-        )
+        total_amount = self._get_total_scanned_amount_eok()
+        self._market_gate_ok = total_amount >= MIN_TOTAL_AMOUNT_EOK
+        if not self._market_gate_ok:
+            send_telegram(
+                f"<b>🚀 [손수건] 종가베팅 자동매매 보류</b>\n"
+                f"모듈1 스캔종목 합산거래대금 {total_amount:,}억 "
+                f"(기준 {MIN_TOTAL_AMOUNT_EOK:,}억 미만) — 진입 안 함, 차트 브리핑만 진행"
+            )
 
-        self._chart_queue = [
-            (s["code"], s["name"], s["rate"])
-            for s in milk_stocks[:5]
-        ]
-        print(f"[모듈5] 차트 브리핑 시작: {len(self._chart_queue)}종목")
+        seen  = set()
+        queue = []
+        for sec, milk_stocks in qualifying:
+            for s in milk_stocks[:CHART_CANDIDATE_CAP]:
+                if s["code"] in seen:
+                    continue
+                seen.add(s["code"])
+                queue.append((s["code"], s["name"], s["rate"], sec["theme"]))
+
+        self._chart_queue = queue
+        print(f"[모듈5] 차트 브리핑 시작: {len(qualifying)}개 업종 / {len(self._chart_queue)}종목")
         self._fetch_next_chart()
 
     def _fetch_next_chart(self):
         if not self._chart_queue or self._chart_busy:
             return
         self._chart_busy = True
-        code, name, rate = self._chart_queue[0]
+        code, name, rate, theme = self._chart_queue[0]
 
         def _do():
             k = self.kiwoom
@@ -325,7 +387,7 @@ class Module5Sonsugun:
             self._queue.done()
             return
 
-        code, name, rate = self._chart_queue.pop(0)
+        code, name, rate, theme = self._chart_queue.pop(0)
         k   = self.kiwoom
         cnt = min(k.dynamicCall("GetRepeatCnt(QString,QString)", trcode, rqname), CHART_CANDLES)
 
@@ -366,10 +428,67 @@ class Module5Sonsugun:
             )
             img_bytes = self._draw_chart(candles, name, rate)
             if img_bytes:
+                self._save_chart_local(img_bytes, code, name)
                 self._send_photo(img_bytes, caption)
+
+            self._try_closing_bet_entry(code, name, theme, candles)
 
         if self._chart_queue:
             QTimer.singleShot(500, self._fetch_next_chart)
+
+    # ----------------------------------------------------------
+    # 종가베팅 자동매매 판단 (15:02~ 차트 도착 시점마다 종목별 실행)
+    # 조건: ① 전체 거래대금 게이트(_start_chart_briefing에서 1회 판정)
+    #      ② 15분봉 MA5 > MA20 (정배열)
+    #      ③ 12:00 기준가 < 현재가(최근 15분봉 종가)
+    # 진입: 종목당 50만원, 트레일링 미적용, 당일 -3% 손절, 익영업일 09:01 시가청산
+    # ----------------------------------------------------------
+    def _try_closing_bet_entry(self, code: str, name: str, theme: str, candles: list):
+        if code in self._entered_today or code in tm.positions:
+            return
+        self._entered_today.add(code)
+
+        if not getattr(self, "_market_gate_ok", False):
+            return
+
+        closes = [c["close"] for c in candles]
+        if len(closes) < 20:
+            print(f"  [모듈5] {name}: 캔들 부족({len(closes)}개) — 판단 보류")
+            return
+        ma5   = sum(closes[-5:]) / 5
+        ma20  = sum(closes[-20:]) / 20
+        if not (ma5 > ma20):
+            print(f"  [모듈5] {name}: MA5({ma5:.0f}) <= MA20({ma20:.0f}) — 우상향 아님, 진입 안 함")
+            return
+
+        current_price = closes[-1]
+        noon_price    = self._noon_prices.get(code)
+        if not noon_price:
+            print(f"  [모듈5] {name}: 12:00 기준가 없음 — 진입 안 함")
+            return
+        if not (current_price > noon_price):
+            print(f"  [모듈5] {name}: 현재가({current_price:,}) <= 12:00 기준가({noon_price:,}) — 진입 안 함")
+            return
+
+        ok = tm.enter_position(
+            code, name, current_price,
+            condition="손수건종가베팅",
+            order_type="market",
+            entry_amount=M5_ENTRY_AMOUNT,
+            stop_loss_rate=M5_STOP_LOSS_RATE,
+            overnight=True,
+            allow_trailing=False,
+            skip_time_gate=True,
+        )
+        if ok:
+            send_telegram(
+                f"<b>🚀 [손수건] 종가베팅 자동진입</b>\n"
+                f"• <b>{name}</b> ({theme})\n"
+                f"  진입가: {current_price:,}원  50만원 내외\n"
+                f"  MA5 {ma5:,.0f} > MA20 {ma20:,.0f}  |  12시대비 상승\n"
+                f"  당일 -3% 손절 / 익영업일 09:01 시가청산"
+            )
+            print(f"  [모듈5] {name}: 종가베팅 자동진입 완료")
 
     # ----------------------------------------------------------
     # matplotlib 캔들차트 생성 (HTS 스타일)
@@ -464,6 +583,21 @@ class Module5Sonsugun:
         except Exception as e:
             print(f"  [모듈5] 차트 생성 오류: {e}")
             return None
+
+    # ----------------------------------------------------------
+    # 차트 로컬 저장 (logs/charts/)
+    # ----------------------------------------------------------
+    def _save_chart_local(self, img_bytes: bytes, code: str, name: str):
+        try:
+            chart_dir = os.path.join("logs", "charts")
+            os.makedirs(chart_dir, exist_ok=True)
+            date_str  = datetime.now().strftime("%Y%m%d")
+            safe_name = re.sub(r'[\\/:*?"<>|]', "", name)
+            path = os.path.join(chart_dir, f"{date_str}_{safe_name}_{code}.png")
+            with open(path, "wb") as f:
+                f.write(img_bytes)
+        except Exception as e:
+            print(f"  [모듈5] 차트 로컬 저장 오류: {e}")
 
     # ----------------------------------------------------------
     # 텔레그램 이미지 전송

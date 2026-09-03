@@ -213,6 +213,9 @@ def on_condition_load():
     # 14:50 일괄청산
     tm.setup_force_exit_timer()
 
+    # 전날 종가베팅(익일시가청산 대상) 복원 + 09:01 시가청산 예약
+    tm.load_and_schedule_overnight_exit()
+
     # 15:45 구글 시트 자동 기록
     setup_sheets_timer(lambda: mod1.theme_ranking)
 
