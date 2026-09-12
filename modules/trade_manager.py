@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from PyQt5.QtCore import QTimer
 from modules.common import *
+from modules import sheets_writer
 
 OVERNIGHT_FILE = os.path.join("logs", "overnight_positions.json")
 
@@ -231,6 +232,11 @@ def exit_position(code: str, reason: str = "청산"):
         f"  매매사유: {pos['condition']}"
     )
 
+    try:
+        sheets_writer.write_trade_record(pos)
+    except Exception as e:
+        print(f"  [trade_manager] 시트 기록 오류: {e}")
+
     if pos.get("exit_timer"):
         pos["exit_timer"].stop()
     unsubscribe_realtime(code)
@@ -270,6 +276,7 @@ def _save_overnight_position(code: str):
         "qty":         pos["total_qty"],
         "entry_price": pos["entry_price"],
         "entry_date":  datetime.now().strftime("%Y-%m-%d"),
+        "entry_time":  pos["entry_time"].isoformat(),
         "condition":   pos["condition"],
     }
     _write_overnight_file(data)
@@ -294,13 +301,21 @@ def load_and_schedule_overnight_exit():
     for code, d in pending.items():
         if code in positions:
             continue
+        entry_time_str = d.get("entry_time")
+        if entry_time_str:
+            try:
+                entry_time = datetime.fromisoformat(entry_time_str)
+            except ValueError:
+                entry_time = datetime.strptime(d["entry_date"], "%Y-%m-%d")
+        else:
+            entry_time = datetime.strptime(d["entry_date"], "%Y-%m-%d")
         positions[code] = {
             "code":          code,
             "name":          d["name"],
             "entry_price":   d["entry_price"],
             "qty":           d["qty"],
             "total_qty":     d["qty"],
-            "entry_time":    datetime.now(),
+            "entry_time":    entry_time,
             "entry_amount":  d["entry_price"] * d["qty"],
             "high_price":    d["entry_price"],
             "stop_price":    0,

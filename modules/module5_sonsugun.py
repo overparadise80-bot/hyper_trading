@@ -221,7 +221,7 @@ class Module5Sonsugun:
 
         if not top_sec or count == 0:
             send_telegram(
-                f"<b>🚀 [손수건] 15:05 브리핑</b>  {now_str}\n"
+                f"<b>🚀 [모듈5·손수건] 15:05 브리핑</b>  {now_str}\n"
                 "교집합 종목 없음 - 오늘 베팅 대상 없음"
             )
             return
@@ -232,7 +232,7 @@ class Module5Sonsugun:
         )
 
         msg = (
-            f"<b>🚀 [손수건] 15:05 종가 베팅 브리핑</b>  {now_str}\n"
+            f"<b>🚀 [모듈5·손수건] 15:05 종가 베팅 브리핑</b>  {now_str}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🏆 최강 주도섹터: <b>{top_sec['theme']}</b>\n"
             f"   평균등락 {top_sec['avg_rate']:+.2f}%  교집합 {count}종목\n\n"
@@ -348,7 +348,7 @@ class Module5Sonsugun:
         self._market_gate_ok = total_amount >= MIN_TOTAL_AMOUNT_EOK
         if not self._market_gate_ok:
             send_telegram(
-                f"<b>🚀 [손수건] 종가베팅 자동매매 보류</b>\n"
+                f"<b>🚀 [모듈5·손수건] 종가베팅 자동매매 보류</b>\n"
                 f"모듈1 스캔종목 합산거래대금 {total_amount:,}억 "
                 f"(기준 {MIN_TOTAL_AMOUNT_EOK:,}억 미만) — 진입 안 함, 차트 브리핑만 진행"
             )
@@ -482,7 +482,7 @@ class Module5Sonsugun:
         )
         if ok:
             send_telegram(
-                f"<b>🚀 [손수건] 종가베팅 자동진입</b>\n"
+                f"<b>🚀 [모듈5·손수건] 종가베팅 자동진입</b>\n"
                 f"• <b>{name}</b> ({theme})\n"
                 f"  진입가: {current_price:,}원  50만원 내외\n"
                 f"  MA5 {ma5:,.0f} > MA20 {ma20:,.0f}  |  12시대비 상승\n"

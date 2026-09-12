@@ -42,10 +42,10 @@ class Module3Closing:
             return
         self.reset()
         print("\n[모듈3] 15:18 종가베팅 스캔 시작...")
-        send_telegram("<b>모듈3 종가베팅 스캔 시작</b> (15:18)")
+        send_telegram("<b>[모듈3] 종가베팅 스캔 시작</b> (15:18)")
 
         if M3_CONDITION not in self.condition_list:
-            send_telegram(f"모듈3: '{M3_CONDITION}' 조건식 없음")
+            send_telegram(f"[모듈3] '{M3_CONDITION}' 조건식 없음")
             return
 
         try:
@@ -141,7 +141,7 @@ class Module3Closing:
 
     def _send_empty_briefing(self, reason: str):
         now = datetime.now().strftime("%m/%d %H:%M")
-        msg = (f"<b>📊 종가베팅 브리핑</b>  {now}\n"
+        msg = (f"<b>📊 [모듈3] 종가베팅 브리핑</b>  {now}\n"
                f"━━━━━━━━━━━━━━━━━━━━\n\n"
                f"해당 종목 없음\n"
                f"<i>{reason}</i>")
@@ -150,7 +150,7 @@ class Module3Closing:
 
     def _enter_all(self):
         now = datetime.now().strftime("%m/%d %H:%M")
-        msg = f"<b>종가베팅 진입</b> ({now})\n--------------------\n\n"
+        msg = f"<b>[모듈3] 종가베팅 진입</b> ({now})\n--------------------\n\n"
 
         for i, code in enumerate(self.final_list):
             d   = self.candidate_data[code]

@@ -55,7 +55,7 @@ from modules.module4_chalna   import Module4Chalna
 from modules.module5_sonsugun import Module5Sonsugun
 from modules.module6_bigdaddy import Module6BigDaddy
 from modules.module7_3200     import Module7Scan3200
-from modules.sheets_writer   import setup_sheets_timer
+from modules.sheets_writer   import setup_sheets_timer, write_daily_summary
 from modules.common          import (
     send_telegram, M1_INTERVAL, M1_START, M1_END,
     M2_START, M2_END, AUTO_TRADE_CONDITION, GDJUM_CONDITION,
@@ -462,6 +462,7 @@ def _send_trade_summary():
     today = datetime.now().strftime("%m/%d")
     header = f"<b>💰 당일 매매 결과 ({today})</b>\n{'─' * 20}"
     send_telegram(f"{header}\n\n{tm.get_trade_summary_text()}")
+    write_daily_summary(tm.trade_log)
     print("  [매매결과] 당일 매매 결과 전송 완료")
 
 def on_initial_condition(screen, code_list, condition_name, idx, prev_next):
