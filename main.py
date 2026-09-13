@@ -351,8 +351,8 @@ def schedule_loop():
                     print(f"[{now()}] 경고: {name} 종료됨 (코드: {exit_code})")
                     processes.pop(name, None)
 
-                    # channel_monitor: 항상 재시작
-                    if name == "channel_monitor" and is_weekday():
+                    # channel_monitor: 항상 재시작 (주말 포함 - 상시 구동 서비스)
+                    if name == "channel_monitor":
                         print(f"[{now()}] channel_monitor 자동 재시작...")
                         time.sleep(5)
                         run_script(name)
