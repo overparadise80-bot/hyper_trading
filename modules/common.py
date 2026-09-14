@@ -92,9 +92,11 @@ BULK_FOLLOWTHROUGH_TOL    = -0.005 # 대기 중 허용 밀림폭(트리거가 �
 # =============================================================
 ENTRY_AMOUNT     = 250000   # 1차 진입금액
 ADD_AMOUNT       = 250000   # 2차 추가금액
+ADD_AMOUNT2      = 250000   # 3차(2차 추가) 추가금액
 HIGH_PRICE_LIMIT = 250000   # 이 가격 초과 시 1주
-ADD_BUY_RATE     = -0.02    # 2차 매수 조건 (실시간 체결가 틱마다 체크)
-STOP_LOSS_RATE   = -0.025   # 손절
+ADD_BUY_RATE     = -0.02    # 2차 매수 조건, 최초 진입가 대비 (실시간 체결가 틱마다 체크)
+ADD_BUY_RATE2    = -0.04    # 3차 매수 조건, 최초 진입가 대비
+STOP_LOSS_RATE   = -0.04    # 손절 (평균단가 대비)
 TRAIL_ACTIVATE   = 0.03     # 트레일링 활성화
 MAX_POSITIONS    = 15       # 전체 최대 보유 종목
 
@@ -115,7 +117,7 @@ M7_START         = time(9, 5)
 M7_END           = time(14, 0)
 M7_CONDITION     = "3분200억거래대금"
 M7_SCREEN        = "0150"
-M7_STOP_LOSS_RATE = -0.025  # 모듈7 전용 손절 (공통 STOP_LOSS_RATE와 별도, 추매(-2%)보다 깊게)
+M7_STOP_LOSS_RATE = -0.04   # 모듈7 손절 (공통 STOP_LOSS_RATE와 동일, 평균단가 대비 -4%)
 
 # =============================================================
 # 텔레그램
@@ -174,6 +176,17 @@ def calc_qty(price: int) -> int:
 
 def now_str() -> str:
     return datetime.now().strftime("%m/%d %H:%M")
+
+def get_day_rate(kiwoom, code: str, price: int) -> float:
+    """진입가 기준 당일 등락률(전일종가 대비). GetMasterLastPrice는 TR 없이
+    동기로 전일종가를 반환하므로 진입 텔레그램 메시지에 바로 붙일 때 사용."""
+    try:
+        prev_close = abs(int(kiwoom.dynamicCall("GetMasterLastPrice(QString)", code).strip()))
+        if prev_close <= 0:
+            return 0.0
+        return (price - prev_close) / prev_close
+    except Exception:
+        return 0.0
 
 
 

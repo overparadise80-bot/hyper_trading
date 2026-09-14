@@ -264,10 +264,11 @@ class Module4Chalna:
         ok = tm.enter_position(code, name, price, "찰나의매매", "market",
                                entry_amount=500_000, add_buy=False)
         if ok:
-            qty = tm.positions[code]["qty"]
+            qty  = tm.positions[code]["qty"]
+            rate = get_day_rate(self.kiwoom, code, price)
             send_telegram(
                 f"<b>찰나의 매매 자동진입!</b>\n"
-                f"• {name}  {qty}주  시장가\n"
+                f"• {name}  {qty}주  시장가  ({rate:+.2%})\n"
                 f"  진입금액: {price*qty:,}원"
             )
 

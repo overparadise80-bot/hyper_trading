@@ -2,8 +2,8 @@
 """
 module7_3200.py - 0150 조건검색 "3분200억거래대금" 실시간 스캔 자동매매
 - 편입 즉시 opt10001로 현재가 조회 후 시장가 1차 25만원 진입
-- 2차 추매(-2% 눌림 25만원) / 트레일링 스탑 / 시간청산은 trade_manager 공통 로직 사용
-- 손절만 모듈7 전용 -2% 적용 (공통 STOP_LOSS_RATE -2.5%와 별도)
+- 추매(1차 -2%/25만원, 2차 -4%/25만원, 둘 다 최초진입가 기준) / 트레일링 스탑 / 시간청산은 trade_manager 공통 로직 사용
+- 손절은 평균단가 대비 -4% (M7_STOP_LOSS_RATE, 공통 STOP_LOSS_RATE와 동일)
 """
 
 from collections import deque
@@ -11,7 +11,7 @@ from datetime import datetime
 from PyQt5.QtCore import QTimer
 from modules.common import (
     send_telegram, M7_CONDITION, M7_SCREEN, M7_STOP_LOSS_RATE,
-    MAX_POSITIONS, is_m7_open, calc_qty
+    MAX_POSITIONS, is_m7_open, calc_qty, get_day_rate
 )
 from modules import trade_manager as tm
 
@@ -117,11 +117,12 @@ class Module7Scan3200:
             print(f"  [3분200억] {name} 진입 실패")
             return
 
-        qty = calc_qty(price)
+        qty  = calc_qty(price)
+        rate = get_day_rate(self.kiwoom, code, price)
         send_telegram(
             f"🎯 <b>[3분200억] 즉시 진입</b>\n"
-            f"• <b>{name}</b>  {price:,}원  {qty}주\n"
-            f"  손절 {M7_STOP_LOSS_RATE:+.1%} | -2%눌림 추매 | 트레일링 적용"
+            f"• <b>{name}</b>  {price:,}원 ({rate:+.2%})  {qty}주\n"
+            f"  손절 {M7_STOP_LOSS_RATE:+.1%}(평균단가) | -2%/-4%눌림 추매 | 트레일링 적용"
         )
         print(f"  [3분200억] 진입 — 시장가 {qty}주 @ {price:,}")
 

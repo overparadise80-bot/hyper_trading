@@ -14,6 +14,10 @@ import hashlib
 import os
 import threading
 import gspread
+
+# 여러 청산이 거의 동시에 발생할 때(예: 익일시가청산 일괄 처리) 스레드별로
+# 독립적인 append_row가 경합하면서 일부 행이 유실되는 문제를 막기 위한 직렬화 락
+_write_lock = threading.Lock()
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
@@ -135,33 +139,34 @@ def write_trade_record(pos: dict):
     """포지션 청산 시 '일일매매' 시트에 1행 기록 (비동기)"""
     def _write():
         try:
-            ws = _open_sheet(SHEET_NAME_TRADES, len(TRADE_HEADER))
-            _ensure_trade_header(ws)
+            with _write_lock:
+                ws = _open_sheet(SHEET_NAME_TRADES, len(TRADE_HEADER))
+                _ensure_trade_header(ws)
 
-            pnl_rate   = pos.get("pnl_rate")
-            pnl_amount = pos.get("pnl_amount") or 0
-            row = [
-                pos["entry_time"].strftime("%m/%d %H:%M"),
-                pos["exit_time"].strftime("%m/%d %H:%M") if pos.get("exit_time") else "",
-                pos["name"],
-                _module_label(pos.get("condition", "")),
-                pos["entry_price"],
-                pos.get("exit_price") or "",
-                pos["total_qty"],
-                f"{pnl_rate:+.2%}" if pnl_rate is not None else "",
-                pnl_amount,
-                pos.get("exit_reason", ""),
-            ]
-            ws.append_row(row, value_input_option="RAW")
+                pnl_rate   = pos.get("pnl_rate")
+                pnl_amount = pos.get("pnl_amount") or 0
+                row = [
+                    pos["entry_time"].strftime("%m/%d %H:%M"),
+                    pos["exit_time"].strftime("%m/%d %H:%M") if pos.get("exit_time") else "",
+                    pos["name"],
+                    _module_label(pos.get("condition", "")),
+                    pos["entry_price"],
+                    pos.get("exit_price") or "",
+                    pos["total_qty"],
+                    f"{pnl_rate:+.2%}" if pnl_rate is not None else "",
+                    pnl_amount,
+                    pos.get("exit_reason", ""),
+                ]
+                ws.append_row(row, value_input_option="RAW")
 
-            last_row  = len(ws.get_all_values())
-            col_start = _col_letter(TRADE_HEADER.index("수익률") + 1)
-            col_end   = _col_letter(TRADE_HEADER.index("수익금액") + 1)
-            color     = _PNL_POS if pnl_amount >= 0 else _PNL_NEG
-            ws.format(f"{col_start}{last_row}:{col_end}{last_row}", {
-                "textFormat": {"foregroundColor": color, "bold": True}
-            })
-            print(f"  [Sheets] 일일매매 기록: {pos['name']} [{pos.get('exit_reason','')}]")
+                last_row  = len(ws.get_all_values())
+                col_start = _col_letter(TRADE_HEADER.index("수익률") + 1)
+                col_end   = _col_letter(TRADE_HEADER.index("수익금액") + 1)
+                color     = _PNL_POS if pnl_amount >= 0 else _PNL_NEG
+                ws.format(f"{col_start}{last_row}:{col_end}{last_row}", {
+                    "textFormat": {"foregroundColor": color, "bold": True}
+                })
+                print(f"  [Sheets] 일일매매 기록: {pos['name']} [{pos.get('exit_reason','')}]")
         except Exception as e:
             print(f"  [Sheets] 일일매매 기록 오류: {e}")
 
@@ -175,32 +180,33 @@ def write_daily_summary(trade_log: list):
 
     def _write():
         try:
-            ws = _open_sheet(SHEET_NAME_TRADES, len(TRADE_HEADER))
-            _ensure_trade_header(ws)
+            with _write_lock:
+                ws = _open_sheet(SHEET_NAME_TRADES, len(TRADE_HEADER))
+                _ensure_trade_header(ws)
 
-            closed    = [p for p in trade_log if p.get("status") == "CLOSED"]
-            open_cnt  = len(trade_log) - len(closed)
-            total_pnl = sum(p["pnl_amount"] for p in closed)
-            win_cnt   = sum(1 for p in closed if p["pnl_amount"] >= 0)
-            lose_cnt  = len(closed) - win_cnt
-            today     = datetime.now().strftime("%m/%d")
+                closed    = [p for p in trade_log if p.get("status") == "CLOSED"]
+                open_cnt  = len(trade_log) - len(closed)
+                total_pnl = sum(p["pnl_amount"] for p in closed)
+                win_cnt   = sum(1 for p in closed if p["pnl_amount"] >= 0)
+                lose_cnt  = len(closed) - win_cnt
+                today     = datetime.now().strftime("%m/%d")
 
-            row = [
-                today, "",
-                f"[합계] 총{len(trade_log)}건 (청산{len(closed)}/보유{open_cnt})",
-                "", "", "", "",
-                f"승{win_cnt} 패{lose_cnt}",
-                total_pnl, "",
-            ]
-            ws.append_row(row, value_input_option="RAW")
+                row = [
+                    today, "",
+                    f"[합계] 총{len(trade_log)}건 (청산{len(closed)}/보유{open_cnt})",
+                    "", "", "", "",
+                    f"승{win_cnt} 패{lose_cnt}",
+                    total_pnl, "",
+                ]
+                ws.append_row(row, value_input_option="RAW")
 
-            last_row = len(ws.get_all_values())
-            last_col = _col_letter(len(TRADE_HEADER))
-            ws.format(f"A{last_row}:{last_col}{last_row}", {
-                "textFormat": {"bold": True, "fontSize": 10},
-                "backgroundColor": _SUMMARY_BG,
-            })
-            print("  [Sheets] 일일매매 합계 기록 완료")
+                last_row = len(ws.get_all_values())
+                last_col = _col_letter(len(TRADE_HEADER))
+                ws.format(f"A{last_row}:{last_col}{last_row}", {
+                    "textFormat": {"bold": True, "fontSize": 10},
+                    "backgroundColor": _SUMMARY_BG,
+                })
+                print("  [Sheets] 일일매매 합계 기록 완료")
         except Exception as e:
             print(f"  [Sheets] 일일매매 합계 기록 오류: {e}")
 

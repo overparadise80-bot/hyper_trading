@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from datetime import datetime, timedelta
 from PyQt5.QtCore import QTimer
-from modules.common import send_telegram, TELEGRAM_TOKEN, CHAT_ID
+from modules.common import send_telegram, TELEGRAM_TOKEN, CHAT_ID, get_day_rate
 from modules import trade_manager as tm
 
 SCREEN_CHART  = "0801"
@@ -481,10 +481,11 @@ class Module5Sonsugun:
             skip_time_gate=True,
         )
         if ok:
+            rate = get_day_rate(self.kiwoom, code, current_price)
             send_telegram(
                 f"<b>🚀 [모듈5·손수건] 종가베팅 자동진입</b>\n"
                 f"• <b>{name}</b> ({theme})\n"
-                f"  진입가: {current_price:,}원  50만원 내외\n"
+                f"  진입가: {current_price:,}원 ({rate:+.2%})  50만원 내외\n"
                 f"  MA5 {ma5:,.0f} > MA20 {ma20:,.0f}  |  12시대비 상승\n"
                 f"  당일 -3% 손절 / 익영업일 09:01 시가청산"
             )

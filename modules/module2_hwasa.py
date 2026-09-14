@@ -8,7 +8,7 @@ module2_hwasa.py - 단타검색식황사장 실시간 감시 + 분할매수 자�
 """
 
 from PyQt5.QtCore import QTimer
-from modules.common import send_telegram, AUTO_TRADE_CONDITION, is_m2_open
+from modules.common import send_telegram, AUTO_TRADE_CONDITION, is_m2_open, get_day_rate
 from modules import trade_manager as tm
 
 NO_ENTRY_MINUTES = 10
@@ -93,9 +93,10 @@ class Module2Hwasa:
 
         ok = tm.enter_position(code, name, price, condition=AUTO_TRADE_CONDITION)
         if ok:
+            rate = get_day_rate(self.kiwoom, code, price)
             send_telegram(
                 f"🎯 <b>[황사장] {ENTRY_HOLD_MIN}분 미이탈 — 1차 진입</b>\n"
-                f"• <b>{name}</b>  {price:,}원  | 모의투자"
+                f"• <b>{name}</b>  {price:,}원 ({rate:+.2%})  | 모의투자"
             )
             print(f"  [황사장] 진입: {name} @ {price:,}")
         else:

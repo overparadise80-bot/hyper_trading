@@ -14,7 +14,7 @@ from PyQt5.QtCore import QTimer
 from modules.common import (
     send_telegram, GDJUM_CONDITION,
     GDJUM_VOL_MULT, GDJUM_CANDLE_N, MAX_POSITIONS, is_m2_open,
-    get_tick_size
+    get_tick_size, get_day_rate
 )
 from modules import trade_manager as tm
 
@@ -379,10 +379,11 @@ class Module2Gdjum:
             return
 
         s["order_sent"] = True
+        rate = get_day_rate(self.kiwoom, code, current_price)
         send_telegram(
             f"🎯 <b>[전일고점돌파] 거래량 조건 통과 — 즉시 진입</b>\n"
             f"• <b>{name}</b>\n"
-            f"  현재가 {current_price:,}원  {qty1}주  ({current_price * qty1:,}원)"
+            f"  현재가 {current_price:,}원 ({rate:+.2%})  {qty1}주  ({current_price * qty1:,}원)"
         )
         print(f"  [전일고점] 진입 — 시장가 {qty1}주 @ {current_price:,}")
 

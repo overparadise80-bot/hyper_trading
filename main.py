@@ -77,6 +77,7 @@ if os.path.exists(_VENV32_EARLY):
         print(f"[재실행] 시스템Python 감지 → venv32로 재시작...")
         subprocess.Popen(
             [_VENV32_EARLY] + sys.argv,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
             creationflags=subprocess.CREATE_NEW_CONSOLE
         )
         sys.exit(0)
@@ -269,6 +270,7 @@ def run_script(name: str):
             # kiwoom은 자체 로그 있음, 별도 콘솔 창 유지
             proc = subprocess.Popen(
                 [python_exe, script_path],
+                cwd=BASE_DIR,
                 creationflags=subprocess.CREATE_NEW_CONSOLE
             )
         else:
@@ -279,6 +281,7 @@ def run_script(name: str):
             log_file = open(log_path, "a", encoding="utf-8", buffering=1)
             proc = subprocess.Popen(
                 [python_exe, "-X", "utf8", script_path],
+                cwd=BASE_DIR,
                 stdout=log_file,
                 stderr=log_file,
             )

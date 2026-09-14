@@ -139,6 +139,7 @@ def enter_position(code: str, name: str, price: int,
         "code":          code,
         "name":          name,
         "entry_price":   actual_price,
+        "first_entry_price": actual_price,
         "qty":           qty,
         "total_qty":     qty,
         "entry_time":    datetime.now(),
@@ -149,6 +150,7 @@ def enter_position(code: str, name: str, price: int,
         "trail_active":  False,
         "allow_trailing": allow_trailing,
         "add_bought":    False,
+        "add_stage":     0,
         "add_buy_enabled": add_buy,
         "exit_timer":    None,
         "condition":     condition,
@@ -173,23 +175,27 @@ def enter_position(code: str, name: str, price: int,
     return True
 
 # =============================================================
-# 2차 추가매수 (실시간 체결가 기준 — 손절과 동일하게 틱마다 체크)
+# 추가매수 (실시간 체결가 기준 — 손절과 동일하게 틱마다 체크)
+# 1차 추매(-2%) / 2차 추매(-4%) — 둘 다 최초 진입가 기준
 # =============================================================
 def do_add_buy(code: str, current_price: int, rate: float):
     pos      = positions[code]
+    stage    = pos.get("add_stage", 0) + 1
+    amount   = ADD_AMOUNT if stage == 1 else ADD_AMOUNT2
     is_high  = pos["is_high_price"]
-    add_qty  = 1 if is_high else max(1, ADD_AMOUNT // current_price)
+    add_qty  = 1 if is_high else max(1, amount // current_price)
     screen   = next_screen()
     send_order_market_buy(screen, code, add_qty)
 
     pos["add_bought"]   = True
+    pos["add_stage"]    = stage
     pos["total_qty"]   += add_qty
     pos["entry_amount"] += current_price * add_qty
     pos["entry_price"]  = pos["entry_amount"] // pos["total_qty"]
     pos["stop_price"]   = pos["entry_price"] * (1 + pos["stop_loss_rate"])
 
     send_telegram(
-        f"📉 <b>[{pos['condition']}] 눌림 추매</b>\n"
+        f"📉 <b>[{pos['condition']}] {stage}차 눌림 추매</b>\n"
         f"• <b>{pos['name']}</b>  {add_qty}주  시장가\n"
         f"  추매가: {current_price:,}원  ({rate:+.2%})\n"
         f"  평균단가: {pos['entry_price']:,}원\n"
@@ -313,6 +319,7 @@ def load_and_schedule_overnight_exit():
             "code":          code,
             "name":          d["name"],
             "entry_price":   d["entry_price"],
+            "first_entry_price": d["entry_price"],
             "qty":           d["qty"],
             "total_qty":     d["qty"],
             "entry_time":    entry_time,
@@ -323,6 +330,7 @@ def load_and_schedule_overnight_exit():
             "trail_active":  False,
             "allow_trailing": False,
             "add_bought":    True,
+            "add_stage":     2,
             "add_buy_enabled": False,
             "exit_timer":    None,
             "condition":     d.get("condition", "종가베팅"),
@@ -352,9 +360,46 @@ def _schedule_open_exit(codes: list):
 
 def _run_open_exit(codes: list):
     print(f"[trade_manager] 익일시가청산 실행 ({len(codes)}종목)")
-    for code in codes:
-        if code in positions:
-            exit_position(code, "익일시가청산")
+    _fetch_open_price_then_exit(codes, 0)
+
+def _fetch_open_price_then_exit(codes: list, idx: int):
+    """실시간 캐시가 아직 비어있을 수 있는 개장 직후 청산이므로,
+    exit_position() 호출 전 opt10001로 실제 현재가를 조회해 캐시를 채워둔다."""
+    if idx >= len(codes):
+        return
+    code = codes[idx]
+    if code not in positions:
+        _fetch_open_price_then_exit(codes, idx + 1)
+        return
+    if _kiwoom is None:
+        exit_position(code, "익일시가청산")
+        _fetch_open_price_then_exit(codes, idx + 1)
+        return
+
+    rqname = "익일청산가조회"
+    screen = next_screen()
+
+    def _on_price(scr, rq, trcode, recordname, prev_next, *a):
+        if rq != rqname:
+            return
+        try:
+            _kiwoom.OnReceiveTrData.disconnect(_on_price)
+        except Exception:
+            pass
+        try:
+            price_str = _kiwoom.dynamicCall(
+                "GetCommData(QString,QString,int,QString)", trcode, rq, 0, "현재가").strip()
+            price = abs(int(price_str))
+            if price > 0:
+                kiwoom_realtime_cache[code] = price
+        except Exception as e:
+            print(f"  [trade_manager] 익일청산가 조회 오류 {code}: {e}")
+        exit_position(code, "익일시가청산")
+        QTimer.singleShot(300, lambda: _fetch_open_price_then_exit(codes, idx + 1))
+
+    _kiwoom.OnReceiveTrData.connect(_on_price)
+    _kiwoom.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
+    _kiwoom.dynamicCall("CommRqData(QString, QString, int, QString)", rqname, "opt10001", 0, screen)
 
 # =============================================================
 # 시간 기반 청산 타이머
@@ -428,6 +473,8 @@ def on_realtime_price(code: str, real_type: str, kiwoom):
         high_price = price
 
     rate = (price - entry_price) / entry_price
+    first_entry_price = pos.get("first_entry_price", entry_price)
+    rate_from_first    = (price - first_entry_price) / first_entry_price
 
     # 트레일링 스탑 활성화 (allow_trailing=False인 포지션은 건너뜀 — 손절만 적용)
     if pos.get("allow_trailing", True) and not trail_active and rate >= TRAIL_ACTIVATE:
@@ -453,10 +500,16 @@ def on_realtime_price(code: str, real_type: str, kiwoom):
         if new_stop > pos["stop_price"]:
             pos["stop_price"] = new_stop
 
-    # 2차 추가매수 (손절보다 먼저 체크 — 동일 -2% 기준이어도 추매가 우선 발동)
-    if not pos["add_bought"] and pos["add_buy_enabled"] and rate <= ADD_BUY_RATE:
-        do_add_buy(code, price, rate)
-        pos = positions[code]
+    # 추가매수 (손절보다 먼저 체크 — 동일 비율이어도 추매가 우선 발동)
+    # 1차(-2%)/2차(-4%) 모두 최초 진입가 기준
+    add_stage = pos.get("add_stage", 0)
+    if pos["add_buy_enabled"]:
+        if add_stage == 0 and rate_from_first <= ADD_BUY_RATE:
+            do_add_buy(code, price, rate_from_first)
+            pos = positions[code]
+        elif add_stage == 1 and rate_from_first <= ADD_BUY_RATE2:
+            do_add_buy(code, price, rate_from_first)
+            pos = positions[code]
 
     # 손절 / 트레일링 발동
     if price <= pos["stop_price"]:
@@ -490,6 +543,10 @@ def on_chejan(gubun: str, kiwoom):
             pos["entry_price"] = ep
             pos["stop_price"]  = ep * (1 + pos["stop_loss_rate"])
             pos["high_price"]  = ep
+            if pos.get("is_overnight"):
+                # enter_position()에서 이미 저장된 값(주문 시점 참고가)을 실체결가로 재저장
+                pos["entry_amount"] = ep * pos["total_qty"]
+                _save_overnight_position(code)
         else:
             # 2차 추가매수 체결: do_add_buy에서 계산한 가중평균 유지, stop_price만 갱신
             pos["stop_price"] = pos["entry_price"] * (1 + pos["stop_loss_rate"])

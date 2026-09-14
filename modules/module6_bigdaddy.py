@@ -17,7 +17,7 @@ from datetime import datetime, time
 from PyQt5.QtCore import QTimer
 from modules.common import (
     send_telegram, ACCOUNT_NUM, STOP_LOSS_RATE,
-    FORCE_EXIT_ALL, get_tick_size, calc_qty
+    FORCE_EXIT_ALL, get_tick_size, calc_qty, get_day_rate
 )
 from modules import trade_manager as tm
 
@@ -563,12 +563,13 @@ class Module6BigDaddy:
                 "score":       d["total_score"],
             }
 
+            rate = get_day_rate(self.kiwoom, code, price)
             send_telegram(
                 f"<b>🚀 [빅콤보] 1차 진입!</b>\n"
                 f"• {name}{sijeo_str}\n"
                 f"  갭: {gap_str}  점수: {d['total_score']}점\n"
                 f"  프로그램: +{d['prog_qty']:,}주\n"
-                f"  진입가: {price:,}원  수량: {qty}주\n"
+                f"  진입가: {price:,}원 ({rate:+.2%})  수량: {qty}주\n"
                 f"  ─────────────────\n"
                 f"  30분 내 -2% 눌림 시 추매 알림 예정"
             )
